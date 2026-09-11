@@ -45,6 +45,18 @@ class AuditAction(StrEnum):
     # --- administrative acts refused before they happen ---------------------
     SECURITY_PRIVILEGE_ESCALATION_BLOCKED = "SECURITY_PRIVILEGE_ESCALATION_BLOCKED"
 
+    # --- core master data (Phase 3) -----------------------------------------
+    CURRENCY_CREATED = "CURRENCY_CREATED"
+    CURRENCY_UPDATED = "CURRENCY_UPDATED"
+    BRANCH_CREATED = "BRANCH_CREATED"
+    BRANCH_UPDATED = "BRANCH_UPDATED"
+    CUSTOMER_CREATED = "CUSTOMER_CREATED"
+    CUSTOMER_UPDATED = "CUSTOMER_UPDATED"
+    CUSTOMER_DEACTIVATED = "CUSTOMER_DEACTIVATED"
+    ACCOUNT_CREATED = "ACCOUNT_CREATED"
+    ACCOUNT_UPDATED = "ACCOUNT_UPDATED"
+    RATE_CREATED = "RATE_CREATED"
+
 
 # Actions that must never be attributed to "nobody": a failed login for an unknown
 # username has no user row, so the actor is null — every other entry names a user.

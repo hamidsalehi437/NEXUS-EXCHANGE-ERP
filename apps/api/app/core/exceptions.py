@@ -36,6 +36,12 @@ class ErrorCode(StrEnum):
     # attacker probing usernames.
     ACCOUNT_DISABLED = "ACCOUNT_DISABLED"
     PERMISSION_DENIED = "PERMISSION_DENIED"
+    # Additive v1 code (Phase 3): the request is well formed and authorised, but the
+    # system's own rules forbid the state it asks for — demoting the base currency,
+    # deactivating the last active branch. Kept separate from VALIDATION_ERROR (the
+    # request is not malformed) and from IMMUTABLE_FIELD (nothing frozen is being
+    # edited), which is what makes the response actionable for an operator.
+    CONFLICT = "CONFLICT"
     FORBIDDEN_SCOPE = "FORBIDDEN_SCOPE"
     RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
     DUPLICATE_RESOURCE = "DUPLICATE_RESOURCE"
@@ -130,6 +136,38 @@ class DuplicateResourceError(NexusError):
     code = ErrorCode.DUPLICATE_RESOURCE
     http_status = 409
     default_message = "The resource already exists."
+
+
+class ConflictError(NexusError):
+    """The request is valid but violates a system rule (409, additive v1 code)."""
+
+    code = ErrorCode.CONFLICT
+    http_status = 409
+    default_message = "The request conflicts with the current state of the system."
+
+
+class CurrencyInactiveError(NexusError):
+    """A deactivated currency was referenced (API_CONTRACT §4: 422)."""
+
+    code = ErrorCode.CURRENCY_INACTIVE
+    http_status = 422
+    default_message = "That currency is not active."
+
+
+class BranchInactiveError(NexusError):
+    """A deactivated branch was referenced (API_CONTRACT §4: 422)."""
+
+    code = ErrorCode.BRANCH_INACTIVE
+    http_status = 422
+    default_message = "That branch is not active."
+
+
+class RateNotFoundError(NexusError):
+    """No quote is in force for the requested pair, branch and instant (422)."""
+
+    code = ErrorCode.RATE_NOT_FOUND
+    http_status = 422
+    default_message = "No exchange rate is in force for that pair."
 
 
 class DataIntegrityError(NexusError):

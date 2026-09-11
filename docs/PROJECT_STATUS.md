@@ -18,8 +18,8 @@
 | --- | --- | --- | --- |
 | 0 | Architecture (documentation set, executable schema, invariant suite) | **APPROVED** | `docs/architecture/`, `docs/database/`, `docs/api/API_CONTRACT.md`, `docs/security/`, `docs/architecture/SYNC_DESIGN.md` |
 | 1 | Project foundation (API skeleton, initial migration, five-service stack, seeds, CI, tooling) | **APPROVED** | `docs/PHASE1_REPORT.md` |
-| 2 | Authentication, users, roles, permissions, devices | **READY FOR REVIEW** | `docs/phases/PHASE2_REPORT.md` |
-| 3 | Core master data (currencies, branches, customers, accounts, rates) | NOT STARTED | — |
+| 2 | Authentication, users, roles, permissions, devices | **APPROVED** | `docs/phases/PHASE2_REPORT.md` |
+| 3 | Core master data (currencies, branches, customers, accounts, rates) | **READY FOR REVIEW** | `docs/phases/PHASE3_REPORT.md` |
 | 4 | Accounting engine | NOT STARTED | — |
 | 5 | Exchange (buy/sell, commission, receipts, cancel, reverse) | NOT STARTED | — |
 | 6 | Cash (open, in, out, adjustment, close) | NOT STARTED | — |
@@ -38,7 +38,8 @@
 Notes:
 
 * Phases 0–13 are the phases defined by the approved roadmap (`docs/architecture/ROADMAP.md`). Rows 14–17 are reserved placeholders; extending the roadmap requires a documentation change and human approval, and this table is updated at the same time.
-* Phase 2 is **READY FOR REVIEW**, not approved. Only the human reviewer moves a phase to APPROVED, and the approval is recorded in this table.
+* Phase 1 and Phase 2 are **APPROVED** (the reviewer's decision, recorded here).
+* Phase 3 is **READY FOR REVIEW**, not approved. Only the human reviewer moves a phase to APPROVED, and the approval is recorded in this table.
 * Phase 2 commits: `2c53a78` (start, last Phase 1 commit) → `f3d4bb6` (implementation, 45 files) →
   `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes) → `58eada2` (hash pin) →
   `19468d2` (CI reference-path fix, defect 13) → `0a45154` (CI check-annotation reporter) →
@@ -50,7 +51,17 @@ Notes:
 * Phase 2 adds one grant-only migration (`0002_runtime_schema_revision`, decision `D-21` in
   `docs/database/SCHEMA.md`) and no structural schema change: the approved Phase 0 schema,
   its invariants and the frozen reference DDL are unchanged.
-* Phase 3 has **not** started and must not start before Phase 2 is approved.
+* Phase 3 commits: `208a3cc` (start, last Phase 2 commit) → the implementation + report commit
+  that carries `docs/phases/PHASE3_REPORT.md` (see `git log`; 30 files, +6 300/−14) → the
+  finalisation commit that pins the hash and records the CI run.
+* Phase 3 needed **no migration**: the approved Phase 0 schema already contained every table,
+  constraint, index and function these entities use, so `docs/database/schema.sql` and the head
+  revision `0002_runtime_schema_revision` are unchanged.
+* Phase 3 exit criteria: a manager can create a currency, branch, customer and rate (with the
+  approved RBAC split made explicit in the report, Limitation L-8); every rate publication
+  produces an audit row; `currencies.code` has no edit path (schema, service and `NEX06`
+  trigger). Full regression: **905 passed**.
+* Phase 4 (accounting engine) has **not** started and must not start before Phase 3 is approved.
 
 ## 2. Reporting rule for every phase from Phase 2 onward
 
@@ -67,7 +78,7 @@ Each phase must, before it is declared complete:
 | Limitation | Impact | Status |
 | --- | --- | --- |
 | No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seeds, development administrator, login and readiness through nginx, worker registration) and its step conclusions are the evidence | **All 15 compose steps green** in run `34628225139` |
-| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f` |
+| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`; the Phase 3 run is recorded in the finalisation commit |
 | Python 3.11.2 (system interpreter) instead of 3.12 | Runtime differs from the target interpreter; dependency set and code target 3.12 | Known; documented per phase |
 | No command-line `redis-cli`/`psql` on `PATH` | Verification uses the driver-level scripts (`scripts/schema_gate.py`, `tests/invariants/*.sql` executed through psycopg) | Worked around |
 
@@ -76,3 +87,4 @@ Each phase must, before it is declared complete:
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
+| 1.1 | 2026-09-12 | Phase 2 marked **APPROVED**; Phase 3 marked **READY FOR REVIEW** with `docs/phases/PHASE3_REPORT.md`; Phase 3 commit chain and the "no migration needed" note added; Phase 4–17 remain NOT STARTED |

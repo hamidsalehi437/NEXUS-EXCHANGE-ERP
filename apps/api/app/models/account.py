@@ -14,7 +14,6 @@ import uuid
 from decimal import Decimal
 
 from sqlalchemy import (
-    CHAR,
     Boolean,
     DateTime,
     ForeignKey,
@@ -25,7 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, UUIDPrimaryKeyMixin
+from app.models.base import Base, TrimmedChar, UUIDPrimaryKeyMixin
 
 
 class Account(UUIDPrimaryKeyMixin, Base):
@@ -44,7 +43,7 @@ class Account(UUIDPrimaryKeyMixin, Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     is_postable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    normal_balance: Mapped[str | None] = mapped_column(CHAR(6))
+    normal_balance: Mapped[str | None] = mapped_column(TrimmedChar(6))
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
 
 

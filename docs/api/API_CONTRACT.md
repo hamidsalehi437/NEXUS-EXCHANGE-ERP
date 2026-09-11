@@ -177,6 +177,7 @@ Every non-2xx response:
 | `ALREADY_REVERSED` | 409 | Document already reversed (`NEX04`) |
 | `REVERSAL_INVALID` | 422 | Reversal does not mirror the original, or original not reversible |
 | `IMMUTABLE_FIELD` | 409 | Attempt to modify a frozen money/identity field (`NEX06`) |
+| `CONFLICT` | 409 | The request is well formed but a system rule refuses it: a non-tradable currency, a parent account that is not a grouping account, the last active branch, an account with children (additive v1 code, Phase 3) |
 | `APPEND_ONLY_VIOLATION` | 403 | Attempt to update/delete an append-only row (`P0001`) |
 | `CASH_RECON_INCOMPLETE` | 422 | Close without counted or expected amounts (`NEX05`) |
 | `CASH_COUNTER_ACCOUNT_REQUIRED` | 422 | `cash/in` or `cash/out` without a counter-account |
@@ -298,12 +299,14 @@ Roles: `SUPER_ADMIN`, `OWNER`, `MANAGER`, `ACCOUNTANT`, `CASHIER`, `AUDITOR`.
 | `GET` | `/customers` | `customer.view` | Search: `q` (name/phone/code), `branch_id`, `is_active` |
 | `POST` | `/customers` | `customer.create` | `customer_code` auto-issued when omitted |
 | `GET` | `/customers/{id}` | `customer.view` | Profile + totals |
-| `PATCH` | `/customers/{id}` | `customer.update` | Audited diff of PII fields |
+| `PATCH` | `/customers/{id}` | `customer.update` | Audited field-level diff; `is_active: true` reactivates |
+| `DELETE` | `/customers/{id}` | `customer.update` | Soft delete: sets `is_active = false` and audits `CUSTOMER_DEACTIVATED`; the row is never removed (PART 25) |
 | `GET` | `/customers/{id}/statement` | `customer.view` | Range statement with running balance per currency |
-| `GET` | `/rates` | `exchange.view` | Current quotes, optionally `branch_id`, `pair` |
+| `GET` | `/rates` | `exchange.view` | The quote in force, one row per pair. Without `branch_id`: the global quotes. With it: the branch's own quote where it has one, otherwise the global fallback. Pair filter needs both `from_currency_id` and `to_currency_id` |
+| `GET` | `/rates/resolve` | `exchange.view` | The quote a transaction would receive (`from_currency_id`, `to_currency_id`, optional `branch_id`, `at`); `RATE_NOT_FOUND` when none is in force. Calls the Phase 0 `resolve_exchange_rate` function |
 | `POST` | `/rates` | `rates.manage` | New quote rows are appended (never edited); audit `RATE_CREATED` with old/new |
 | `GET` | `/rates/history` | `exchange.view` | `from_currency_id`, `to_currency_id`, `from`, `to` |
-| `GET` | `/accounts` | `accounts.manage` | Chart of accounts (tree via `parent_id`) |
+| `GET` | `/accounts` | `accounts.manage` | Chart of accounts (tree via `parent_id`); each row carries `has_children` and `currency_code` |
 | `POST` | `/accounts` | `accounts.manage` | Create account; `normal_balance` derived from `account_type` |
 | `PATCH` | `/accounts/{id}` | `accounts.manage` | Name/parent/active only; never `code`, never `account_type` after postings |
 | `GET` | `/journal` | `reports.view` | Entry list with filters (`reference_type`, `reference_id`, `from`, `to`, `branch_id`) |

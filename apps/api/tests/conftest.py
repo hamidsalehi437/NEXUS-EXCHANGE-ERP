@@ -253,6 +253,57 @@ def provisioned_device(api_client: TestClient, admin_headers: dict[str, str], br
     return _provision
 
 
+@pytest.fixture
+def accountant_headers(
+    api_client: TestClient, make_user: object, provisioned_device: object
+) -> dict[str, str]:
+    """Headers for a seeded ACCOUNTANT logged in on an administrator-provisioned device.
+
+    ACCOUNTANT (like AUDITOR) deliberately lacks ``device.register``, so the installation
+    is registered by an administrator — the documented onboarding path.
+    """
+    from tests.auth_helpers import bearer, login
+
+    user = make_user(roles=("ACCOUNTANT",))  # type: ignore[operator]
+    device_uuid = provisioned_device()  # type: ignore[operator]
+    tokens = login(
+        api_client,
+        str(user["username"]),
+        str(user["password"]),
+        device_uuid=device_uuid,
+    ).json()
+    return bearer(str(tokens["access_token"]), str(tokens["device"]["id"]))
+
+
+@pytest.fixture
+def branch_factory(api_client: TestClient, admin_headers: dict[str, str]) -> Iterator[object]:
+    """Create branches through the API and **deactivate them again** after the test.
+
+    Why the teardown matters: a device's branch is resolved automatically only while
+    exactly one branch is active. A test that leaves a second active branch behind changes
+    how *every later* login resolves its branch, so the suite would pass or fail depending
+    on execution order. The branches are deactivated, never deleted — the same way an
+    operator retires a branch, and the same rule the runtime role enforces.
+    """
+    from tests.masterdata_helpers import create_branch
+
+    created: list[dict[str, Any]] = []
+
+    def _make(**kwargs: Any) -> dict[str, Any]:
+        body = create_branch(api_client, admin_headers, **kwargs).json()
+        created.append(body)
+        return body
+
+    yield _make
+
+    for branch in created:
+        api_client.patch(
+            f"/api/v1/branches/{branch['id']}",
+            json={"is_active": False},
+            headers=admin_headers,
+        )
+
+
 @pytest.fixture(scope="session")
 def limited_admin_role(main_database: str) -> str:
     """A non-seeded role that may administer users but nothing else.

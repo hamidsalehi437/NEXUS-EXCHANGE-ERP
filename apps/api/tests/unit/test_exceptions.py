@@ -16,7 +16,10 @@ from app.core.exceptions import (
     AlreadyReversedError,
     AppendOnlyViolationError,
     AuthenticationError,
+    BranchInactiveError,
     CashReconciliationIncompleteError,
+    ConflictError,
+    CurrencyInactiveError,
     DataIntegrityError,
     DuplicateResourceError,
     ErrorCode,
@@ -26,6 +29,7 @@ from app.core.exceptions import (
     JournalUnbalancedError,
     NexusError,
     PermissionDeniedError,
+    RateNotFoundError,
     ResourceNotFoundError,
     ReversalError,
     ServiceUnavailableError,
@@ -53,6 +57,11 @@ _STATUS_MATRIX = [
     (ImmutableFieldError, 409),
     (AppendOnlyViolationError, 403),
     (CashReconciliationIncompleteError, 422),
+    # Phase 3 master data
+    (ConflictError, 409),
+    (CurrencyInactiveError, 422),
+    (BranchInactiveError, 422),
+    (RateNotFoundError, 422),
     (ServiceUnavailableError, 503),
 ]
 

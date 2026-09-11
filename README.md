@@ -2,11 +2,12 @@
 
 An offline-first, multi-currency, multi-branch ERP and point-of-sale system for **licensed** currency-exchange and money-service businesses.
 
-> **وضعیت فعلی — فاز ۰ و فاز ۱ تحویل شد؛ منتظر تأیید فاز ۱.**
+> **وضعیت فعلی — فاز ۰، ۱ و ۲ تأیید شده‌اند؛ فاز ۳ (دادهٔ پایه: ارزها، شعبه‌ها، مشتریان، حساب‌ها، نرخ‌ها) آمادهٔ بازبینی است.**
 > فاز ۰: مستندات معماری، ERD، اسکیمای اجرایی، قرارداد API، طراحی همگام‌سازی، معماری امنیت، مدل حسابداری و نقشه راه.
-> فاز ۱: پایهٔ واقعی `apps/api` (FastAPI + Pydantic v2 + SQLAlchemy 2.x)، مهاجرت Alembic از اسکیمای تأییدشده، پشتهٔ پنج‌سرویسی Docker Compose، بذرکاری idempotent، بررسی سلامت/آمادگی، worker، CI و مجموعهٔ تست. هیچ endpoint کسب‌وکاری هنوز پیاده‌سازی نشده است؛ آن کار فاز ۲ است.
+> فاز ۲: احراز هویت (OAuth2/JWT با چرخش refresh)، Argon2id، RBAC با شش نقش، مدیریت دستگاه و نشست، محدودیت نرخ، لاگ حسابرسی زنجیره‌ای.
+> فاز ۳: ارزها، شعبه‌ها، مشتریان (کد خودکار)، نمودار حساب‌ها و نرخ‌های ارز (append-only و audit‌شده) با سرویس و endpointهای تعیین نرخ. گزارش کامل: [`docs/phases/PHASE3_REPORT.md`](docs/phases/PHASE3_REPORT.md). فاز ۴ شروع نشده است.
 >
-> **Current status — Phase 0 and Phase 1 delivered; Phase 1 awaits approval.** Phase 1 contains the API foundation, the initial Alembic revision built from the approved schema, the five-service compose stack, seeds, health/readiness, the worker and CI. No business endpoint exists yet — that is Phase 2.
+> **Current status — Phases 0, 1 and 2 are APPROVED; Phase 3 (core master data: currencies, branches, customers, accounts, exchange rates) is READY FOR REVIEW.** Phase 2 delivered authentication, users, roles, permissions and devices. Phase 3 delivers the master data every later phase depends on — with no schema change and no new migration, because the approved Phase 0 schema already covered these entities. 905 tests pass. Phase 4 has **not** started. Full report: [`docs/phases/PHASE3_REPORT.md`](docs/phases/PHASE3_REPORT.md).
 
 ## The five non-negotiables
 
@@ -79,6 +80,7 @@ Full runbook, native (no-Docker) path, TLS, hardening checklist and troubleshoot
 
 ```bash
 cd apps/api
+# 905 tests today: 444 unit (no database) + 461 integration (real PostgreSQL).
 PYTHONPATH=. python -m pytest tests/unit -q          # unit tests, no database needed
 PYTHONPATH=. python -m pytest tests/integration -q   # real PostgreSQL: migration, schema gates, seeds, invariants, worker
 python -m ruff check . && python -m mypy app seeds scripts

@@ -156,6 +156,7 @@ class Settings(BaseSettings):
     offline_max_minutes_default: int = Field(default=480, ge=1)
     numbering_prefix_exchange: str = "NX"
     numbering_prefix_transfer: str = "TR"
+    numbering_prefix_customer: str = "CUS"
     numbering_width: int = Field(default=6, ge=4, le=12)
     idempotency_retention_days: int = Field(default=30, ge=1)
 
@@ -277,7 +278,9 @@ class Settings(BaseSettings):
             raise ValueError(f"{env_field} must be at least {_MIN_SECRET_LENGTH} characters long")
         return value
 
-    @field_validator("numbering_prefix_exchange", "numbering_prefix_transfer")
+    @field_validator(
+        "numbering_prefix_exchange", "numbering_prefix_transfer", "numbering_prefix_customer"
+    )
     @classmethod
     def _validate_prefix(cls, value: str) -> str:
         if not value.isalpha() or not value.isupper() or len(value) > 6:

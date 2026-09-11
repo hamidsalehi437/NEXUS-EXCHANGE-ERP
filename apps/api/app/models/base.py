@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, MetaData, func, text
+from sqlalchemy import CHAR, DateTime, Integer, MetaData, func, text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 # Naming convention for objects SQLAlchemy creates. Explicitly named objects in
 # the schema (all CHECK constraints, most indexes) keep their own names, which is
@@ -47,6 +50,32 @@ class Base(DeclarativeBase):
             for column in self.__table__.columns
             if column.name not in excluded
         }
+
+
+class TrimmedChar(TypeDecorator[str]):
+    """``CHAR(n)`` that reports its value without the blank padding PostgreSQL adds.
+
+    The approved DDL uses ``CHAR(6)`` for ``accounts.normal_balance``. PostgreSQL
+    stores ``CHAR`` blank-padded, so a ``SELECT`` returns ``'DEBIT '`` — true to the
+    stored bytes, but not to the value: comparing it to ``'DEBIT'`` in Python, or
+    serialising it into an API response or an audit row, would leak the padding.
+    The column type still compiles to ``CHAR(6)`` (the ORM/schema parity gate compares
+    the compiled type exactly), and comparisons in SQL are unaffected because ``CHAR``
+    ignores trailing blanks by definition.
+    """
+
+    impl = CHAR
+    cache_ok = True
+
+    def result_processor(self, dialect: Dialect, coltype: object) -> Callable[[Any], Any] | None:
+        """Wrap the dialect's processor so a ``CHAR`` value comes back unpadded."""
+        inner = super().result_processor(dialect, coltype)
+
+        def process(value: Any) -> Any:
+            processed = inner(value) if inner is not None else value
+            return processed.strip() if isinstance(processed, str) else processed
+
+        return process
 
 
 class UUIDPrimaryKeyMixin:

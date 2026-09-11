@@ -53,6 +53,35 @@ def head_revision() -> str:
     return head
 
 
+# Baseline for settings built inside tests: valid, secret-safe and independent of any
+# developer .env. Values are obviously not production secrets (long, distinct, local DSNs).
+SETTINGS_BASE: dict[str, object] = {
+    "app_env": "development",
+    "jwt_secret": "1" * 40,
+    "jwt_refresh_secret": "2" * 40,
+    "redis_url": "redis://:test-password@127.0.0.1:6379/15",
+    "cors_origins": "http://localhost:3000",
+    "trusted_hosts": "localhost,127.0.0.1",
+    "storage_path": "/tmp/nexus-test-storage",
+    "dev_admin_password": None,
+}
+
+
+def build_settings(**overrides: object) -> object:
+    """Build validated :class:`Settings` from the test baseline plus overrides."""
+    from app.core.config import Settings
+
+    return Settings(_env_file=None, **{**SETTINGS_BASE, **overrides})  # type: ignore[arg-type]
+
+
+def settings_for_database(database: str) -> object:
+    """Settings whose both DSNs point at ``database`` (for service-level tests)."""
+    return build_settings(
+        database_url=database_dsn(database, driver="asyncpg"),
+        database_migration_url=database_dsn(database, driver="asyncpg"),
+    )
+
+
 def admin_dsn() -> str:
     """DSN of a role allowed to create/drop databases (``NEXUS_TEST_ADMIN_DSN``)."""
     return os.environ.get("NEXUS_TEST_ADMIN_DSN", DEFAULT_ADMIN_DSN)
