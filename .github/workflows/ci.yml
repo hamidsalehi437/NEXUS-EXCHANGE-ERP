@@ -307,17 +307,7 @@ jobs:
           PY
 
       - name: Readiness through nginx (PostgreSQL + Redis + schema revision)
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 20); do
-            # --fail-with-body keeps the payload of a 503 so the assertion below can
-            # report what is degraded instead of "no payload".
-            if curl -fsS --fail-with-body http://127.0.0.1:8080/api/v1/health/ready -o /tmp/ready.json; then
-              break
-            fi
-            echo "attempt ${attempt}: not ready yet"; sleep 3
-          done
-          scripts/ci_exec_report.sh "nginx readiness assertions" python3 scripts/ci_assert_ready.py /tmp/ready.json
+        run: scripts/ci_exec_report.sh "nginx readiness assertions" python3 scripts/ci_assert_ready.py --url http://127.0.0.1:8080/api/v1/health/ready
 
       - name: Verify the worker is alive and registered its tasks
         run: |
