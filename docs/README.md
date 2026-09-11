@@ -48,6 +48,7 @@ read the applied revision and readiness answers `503` in any two-role deployment
 MATCH, and the Phase 0 invariant suite green (52 assertions) on a freshly migrated database.
 CI for the branch runs the whole suite, the schema gates, the seed idempotency check and the
 Phase 0 invariants, and the compose job builds the real five-service stack, migrates, seeds
-(including the development administrator) and logs in through nginx.
+(including the development administrator) and logs in through nginx — **all six jobs green**
+on the Phase 2 finalization commit (run 34628225139).
 No business endpoint is implemented yet; master data starts in Phase 3, which has **not** been started.
 The permanent, reviewable evidence for Phase 2 is [`phases/PHASE2_REPORT.md`](phases/PHASE2_REPORT.md).

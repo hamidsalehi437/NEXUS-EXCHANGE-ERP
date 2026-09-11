@@ -70,8 +70,8 @@ endpoint, and any change to the approved accounting invariants or the Phase 0 sc
 | `0a45154` | CI diagnostics: `scripts/ci_exec_report.sh` streams a failing stack command's output into a check annotation, so a red step is diagnosable even when the job log is not retrievable |
 | `149bd6e` | CI defect 14: `.env.example` no longer places a trailing comment on an empty value (both affected keys), `scripts/gen_env.sh` refuses to render such a file, `TestGeneratedEnvironment` locks it down, and the compose job now seeds the development administrator and logs in through nginx |
 | `2e8896a` | CI defect 15: `scripts/ci_assert_ready.py` probes the readiness endpoint itself so the failing hop is named in the annotation |
-| the commit that contains this revision | Deployment defect 16 (`0002_runtime_schema_revision`), derived head revisions in the tests, `docs/database/SCHEMA.md` decision `D-21`, count and CI updates in this report |
-| following commit | Pins this report's final commit hash and records the CI conclusions of that exact run |
+| `19e0b0f` | **Finalization commit.** Deployment defect 16 (`0002_runtime_schema_revision`), derived head revisions in the tests, `docs/database/SCHEMA.md` decision `D-21`, and the revision of this report that carries the confirmed CI result — all six CI jobs green (run `34628225139`; PR run `34628229827`) |
+| following commit | Pins the finalization hash in this table and in `docs/PROJECT_STATUS.md`, and records the CI conclusions. Its own hash is visible in `git log` on the branch and on the pull request |
 
 ## 3. Files created / modified
 
@@ -438,41 +438,42 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
    because it sits after the readiness step that was failing. The run for the commit that carries
    this revision is the authoritative result and is recorded in the commit that pins it.
 2. **GitHub CI** — the workflow runs on GitHub for this branch (push and pull-request
-   events). Step-level analysis of the failing runs:
-   * `f3d4bb6`: lint failed at `ruff format --check`; unit failed at `pytest (unit)`;
-     compose failed at `Static infrastructure tests`; integration failed at
-     `Migration on a clean database`.
-   * Three causes are fixed in the finalization commit: the formatting; the autouse
-     fixture's unconditional Redis dependency (which also made the static-infrastructure
-     step require a Redis that job does not have); and the Redis-backed limiter tests, which
-     moved to the integration suite.
-   * The migration step failed because it loads `Settings` without supplying
-     `JWT_SECRET`/`JWT_REFRESH_SECRET` — a defect that predates Phase 2 and is visible on the
-     Phase 1 runs too. The job now carries CI-only values for those fields, and the seed
-     expectations were updated from 88/87 to 89/88 rows for seed 005.
-   * Run for `58eada2`: **lint, type check, unit tests and OpenAPI all pass**; the integration
-     job runs the whole suite and the migration step, then fails at
-     `Schema gate — reference file vs migrated database` because that step (and the Phase 0
-     step) read their reference file through a path that does not exist from `apps/api` —
-     defect 13 in §14, reproduced locally with `psql` and fixed in `19468d2`.
-   * Run for `0a45154`: lint, type check, unit, OpenAPI **and the complete integration job
-     pass** — including the `db-db` reference-file gate, the seed idempotency greps (89 then
-     88 rows) and the Phase 0 invariant suite, which executed in CI for the first time. The
-     compose job reaches its last steps: both images build, the stack becomes healthy,
-     `alembic upgrade head` succeeds inside the container, and `python -m seeds` fails —
-     defect 14.
-   * Run for `149bd6e`: the whole suite, all gates and the compose job's seeds pass; the
-     development-administrator seed and a real login through nginx pass; the readiness step —
-     reachable for the first time — fails and reports the PostgreSQL component as unavailable
-     (defect 16, diagnosed from the check annotation).
-   * **Job logs are not retrievable from this sandbox** (`gh run view --log-failed` and the
-     jobs/logs API return EOF, and the results host is blocked), which is why two failures stayed
-     undiagnosed through previous phases. `scripts/ci_exec_report.sh` (`0a45154`) streams a
-     failing stack command's output into a **check annotation**, which *is* readable through the
-     API, and it produced the evidence for defects 14, 15 and 16.
-   * The CI run for the commit that carries this revision is the authoritative record of the
-     final job states; the pull-request checks page shows them alongside this document, and the
-     commit that pins this report records the conclusions.
+   events) and is **green** for the finalization commit `19e0b0f`: run
+   [`34628225139`](https://github.com/hamidsalehi437/NEXUS-EXCHANGE-ERP/actions/runs/34628225139)
+   (push) and run `34628229827` (pull request) both report **success** for lint, type check,
+   unit tests, integration tests and schema gates, OpenAPI and the compose stack.
+
+   The integration job now executes the whole suite plus the `db-db` reference-file gate, the
+   seed idempotency check (89 then 88 rows) and the Phase 0 invariant suite — steps that had
+   never run in CI before this phase. The compose job executes all fifteen steps: `config -q`,
+   the static infrastructure tests, both image builds, `up -d --wait`, the migration, the seed
+   (documented default and development administrator), a real **login through nginx**,
+   **readiness through nginx** (PostgreSQL + Redis + the expected schema revision) and the
+   worker's task registration.
+
+   Getting there required diagnosing four pre-existing failures without access to the job logs
+   (`gh run view --log-failed` and the logs API return EOF here, and the results host is
+   blocked). Every one is fixed in the repository rather than worked around:
+
+   * defect 12 — the integration job's migration/schema steps loaded `Settings` without
+     `JWT_SECRET`/`JWT_REFRESH_SECRET` (pre-existing; visible on the Phase 1 runs too);
+   * defect 13 — both `psql` gates read their reference file through a path that does not
+     exist from `apps/api`; they now resolve it from `$(git rev-parse --show-toplevel)` and
+     `TestCiWorkflowPaths` asserts that every step path resolves;
+   * defect 14 — `DEV_ADMIN_PASSWORD=        # comment` in `.env.example`: Compose does not
+     strip an inline comment from an *empty* value, so the seed received the comment as the
+     password and refused it (the same shape on `BACKUP_ENCRYPTION_RECIPIENT` silently
+     satisfied the production "encrypted backups" check with a non-recipient);
+   * defect 15 — the readiness step could not report why it failed; the probe now reports the
+     transport error and the payload, which is how defect 16 was identified;
+   * defect 16 — the runtime role could not read `alembic_version`, so readiness answered
+     `503` in every two-role deployment; fixed by the grant-only migration
+     `0002_runtime_schema_revision`.
+
+   The failure evidence for these came from check annotations emitted by
+   `scripts/ci_exec_report.sh`, a durable improvement: a red stack step now carries its own
+   diagnosis even when the job log is not retrievable.
+
 3. **Python version** — the sandbox interpreter is 3.11.2, while the project targets 3.12+
    (CI uses 3.12). The suite and the static tooling pass on 3.11; the CI type-check and
    lint jobs (3.12) are the authoritative check for the target interpreter, and they pass
@@ -519,8 +520,8 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
 | Migration checks re-run | **PASS** | Fresh `alembic upgrade head`, head unchanged, db-db MATCH |
 | Ruff | **PASS** | `ruff check` + `ruff format --check` clean (117 files; also green in CI) |
 | MyPy | **PASS** | 70 source files, no issues |
-| Docker Compose verification | **PARTIAL — via CI** | No Docker here (§18.1). In CI the compose job builds both images, raises the stack to healthy, migrates, seeds (documented default and development administrator), authenticates through nginx, and probes readiness. It found defects 14 and 16, both fixed; the confirming run is recorded in the commit that pins this report |
-| GitHub CI green | **PASS (pending the pinning run)** | Lint, type, unit, OpenAPI and the complete integration job pass in CI; the compose job's steps pass through the login and readiness stages after defects 14–16 were fixed — the run for this revision is the confirmation (§18.2) |
+| Docker Compose verification | **PASS (via CI)** | The compose acceptance job executes all fifteen steps green on `19e0b0f` (run `34628225139`): images, health, migrate, seeds, development administrator, login through nginx, readiness through nginx, worker registration. No Docker CLI exists in this sandbox (§18.1), and the job found defects 14 and 16, both fixed |
+| GitHub CI green | **PASS** | All six jobs pass on the finalization commit `19e0b0f` — push run `34628225139` and pull-request run `34628229827` (§18.2) |
 | Python 3.12 verification | **NOT VERIFIED** | 3.11.2 in this sandbox; CI runs 3.12 (lint/type/openapi green there) |
 
 ## 21. Declaration

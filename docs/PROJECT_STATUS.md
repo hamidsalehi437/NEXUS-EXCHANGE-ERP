@@ -43,7 +43,10 @@ Notes:
   `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes) → `58eada2` (hash pin) →
   `19468d2` (CI reference-path fix, defect 13) → `0a45154` (CI check-annotation reporter) →
   `149bd6e` (environment-comment defect 14) → `2e8896a` (readiness probe, defect 15) →
-  the commit that carries the fix for defect 16 (`0002_runtime_schema_revision`) and this report's revision.
+  `19e0b0f` (**finalization**: defect 16 fix — the grant-only migration
+  `0002_runtime_schema_revision` — plus the revision of `docs/phases/PHASE2_REPORT.md` that
+  carries the accepted results) → the documentation commit that pins these hashes (top of the
+  branch; visible in `git log`).
 * Phase 2 adds one grant-only migration (`0002_runtime_schema_revision`, decision `D-21` in
   `docs/database/SCHEMA.md`) and no structural schema change: the approved Phase 0 schema,
   its invariants and the frozen reference DDL are unchanged.
@@ -63,8 +66,8 @@ Each phase must, before it is declared complete:
 
 | Limitation | Impact | Status |
 | --- | --- | --- |
-| No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seed, login through nginx) and its step conclusions are the evidence | Verified through CI steps |
-| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | Read back per phase |
+| No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seeds, development administrator, login and readiness through nginx, worker registration) and its step conclusions are the evidence | **All 15 compose steps green** in run `34628225139` |
+| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f` |
 | Python 3.11.2 (system interpreter) instead of 3.12 | Runtime differs from the target interpreter; dependency set and code target 3.12 | Known; documented per phase |
 | No command-line `redis-cli`/`psql` on `PATH` | Verification uses the driver-level scripts (`scripts/schema_gate.py`, `tests/invariants/*.sql` executed through psycopg) | Worked around |
 
