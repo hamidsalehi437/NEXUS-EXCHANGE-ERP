@@ -39,8 +39,12 @@ foundation: login with Argon2id and device binding, DB-backed lockout, HS256 acc
 re-validated against the database on every request, refresh rotation with reuse detection,
 logout/session/device revocation, users/roles/permissions administration with anti-escalation
 guards, audit attribution for every authentication event, and HTTP-surface rate limiting.
-**No schema change was required.** `pytest tests` → **765 passed** (500 Phase 0/1 regression +
-265 new Phase 2 tests), Ruff (`check` + `format --check`) and MyPy clean, both schema gates
+**No structural schema change was required.** Phase 2 adds only the grant-only migration
+`0002_runtime_schema_revision` (`GRANT SELECT ON alembic_version TO nexus_app`), which fixes a
+real deployment defect the compose acceptance job found: without it the runtime role cannot
+read the applied revision and readiness answers `503` in any two-role deployment.
+`pytest tests` → **769 passed** (500 Phase 0/1 regression +
+269 new Phase 2 tests), Ruff (`check` + `format --check`) and MyPy clean, both schema gates
 MATCH, and the Phase 0 invariant suite green (52 assertions) on a freshly migrated database.
 CI for the branch runs the whole suite, the schema gates, the seed idempotency check and the
 Phase 0 invariants, and the compose job builds the real five-service stack, migrates, seeds

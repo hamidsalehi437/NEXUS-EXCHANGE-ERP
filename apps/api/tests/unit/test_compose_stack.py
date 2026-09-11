@@ -27,7 +27,7 @@ import pytest
 import yaml
 
 from app.core.config import Settings
-from tests.helpers import REPO_ROOT
+from tests.helpers import REPO_ROOT, head_revision
 
 pytestmark = pytest.mark.unit
 
@@ -633,7 +633,7 @@ class TestCiReadinessContract:
             {
                 "status": "ready",
                 "environment": "development",
-                "schema_revision": "0001_initial_schema",
+                "schema_revision": head_revision(),
                 "components": [
                     {"name": "postgresql", "status": "ok"},
                     {"name": "redis", "status": "ok"},
@@ -648,7 +648,7 @@ class TestCiReadinessContract:
             tmp_path,
             {
                 "status": "degraded",
-                "schema_revision": "0001_initial_schema",
+                "schema_revision": head_revision(),
                 "components": [
                     {"name": "postgresql", "status": "ok"},
                     {"name": "redis", "status": "unavailable"},
@@ -659,6 +659,26 @@ class TestCiReadinessContract:
         assert "not ready" in result.stderr
         assert result.stdout.strip(), "the payload must be printed as evidence"
         assert "unavailable" in result.stdout and "redis" in result.stdout, result.stdout
+
+    def test_the_ci_script_expects_the_declared_head(self) -> None:
+        """Adding a migration must not leave the acceptance job asserting an old revision.
+
+        ``scripts/ci_assert_ready.py`` runs on a GitHub runner without the test suite, so it
+        carries the expected revision as a literal. This test is what keeps that literal
+        honest when the migration tree moves.
+        """
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "ci_assert_ready", SCRIPTS_DIR / "ci_assert_ready.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert head_revision() == module.EXPECTED_REVISION, (
+            "scripts/ci_assert_ready.py expects "
+            f"{module.EXPECTED_REVISION!r} but the migration head is {head_revision()!r}"
+        )
 
     def test_a_missing_payload_fails_with_an_explanation(self, tmp_path: Path) -> None:
         result = subprocess.run(

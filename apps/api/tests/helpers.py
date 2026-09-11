@@ -34,6 +34,25 @@ DEV_ADMIN_PASSWORD = "Test-Admin-Password-2026!"
 DEFAULT_ADMIN_DSN = "postgresql+psycopg://postgres@127.0.0.1:5432/postgres"
 
 
+def head_revision() -> str:
+    """Return the migration head the repository declares.
+
+    Tests must not hard-code a revision id: a new migration would otherwise edit
+    assertions that are not about its content (the defect-16 migration in Phase 2 had to
+    update four of them). Reading the head from the migration tree keeps the suite honest
+    about what the repository actually declares.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(API_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(API_ROOT / "alembic"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if head is None:  # pragma: no cover - a repository without migrations
+        raise AssertionError("the migration tree declares no head revision")
+    return head
+
+
 def admin_dsn() -> str:
     """DSN of a role allowed to create/drop databases (``NEXUS_TEST_ADMIN_DSN``)."""
     return os.environ.get("NEXUS_TEST_ADMIN_DSN", DEFAULT_ADMIN_DSN)

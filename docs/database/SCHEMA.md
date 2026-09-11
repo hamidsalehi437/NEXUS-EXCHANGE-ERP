@@ -145,6 +145,10 @@ Legal/financial reporting always reads the ledger or the movement tables. The ca
 
 Deployments create login roles that inherit from these groups (see `docs/security/SECURITY.md` §8). The verified suite proves `nexus_app` is denied `DELETE`/`UPDATE` on ledgers even if application logic is bypassed (3/3 denials).
 
+`nexus_app` also holds `SELECT` on `alembic_version` (D-21), the one table Alembic creates
+outside the frozen DDL: since the reference file is checksummed and frozen, that grant is
+delivered by the migration `0002_runtime_schema_revision` rather than by an edit to it.
+
 `nexus_app` holds exactly one `DELETE` privilege: `idempotency_keys` (D-20). It is an operational table — no money, no audit trail, no business document — and PART 40's retention window (`IDEMPOTENCY_RETENTION_DAYS`, default 30 days) requires that records whose request can no longer be replayed are removed by the maintenance worker. Every other financial, document, master-data and audit table keeps the revocations above.
 
 ## 9. Documented deviations and additions
@@ -173,12 +177,13 @@ Deployments create login roles that inherit from these groups (see `docs/securit
 | D-18 | Status machines as triggers | Addition | PART 14/15 status sets are meaningless without transition rules | `REVERSED → COMPLETED` would be possible |
 | D-19 | Reversal link direction fixed (reversing row points at the original) + deferred I-4 trigger | Decision | Makes "reversed ⇒ reveral exists" checkable without circular constraints | Ambiguity that the Phase 0 suite caught as defect #2 |
 | D-20 | `GRANT DELETE ON idempotency_keys TO nexus_app` | Correction | The runtime role is least-privilege (`SELECT/INSERT/UPDATE` only), which left the retention worker unable to delete expired idempotency records — the scheduled task failed with `permission denied`, discovered while verifying the Phase 1 worker against a database owned by a non-superuser role | Idempotency records would grow without bound and the documented retention policy would be unenforceable; the alternative (running the worker as the schema owner) would hand DDL rights to a service process |
+| D-21 | `GRANT SELECT ON alembic_version TO nexus_app` (migration `0002_runtime_schema_revision`) | Correction | The runtime role could not read the applied migration revision, so `/api/v1/health/ready` answered `503` with `postgresql: unavailable (ProgrammingError)` in every deployment that uses the documented two-role model. Alembic creates `alembic_version` *before* it runs the migration script, so the frozen DDL's `ALTER DEFAULT PRIVILEGES … TO nexus_app` (which only affects objects created afterwards) never covered it, and the explicit grant list enumerates the schema's own tables. Found by the compose acceptance job's readiness step (Phase 2, defect 16); a single-role test database cannot show it | Orchestrators and load balancers would keep a healthy API out of service; the alternative (readiness ignoring the revision) would hide a genuine permission failure instead of reporting it |
 
 **Not implemented on purpose (no placeholders):** FX revaluation of open positions, hard period locking and month-end closing (see `ACCOUNTING_MODEL.md` §11); KYC/AML modules (regulatory scope, `SECURITY.md` §10); payroll, inventory and tax modules (out of product scope).
 
 ## 10. Migration strategy (Alembic)
 
-1. **The reference file is the contract.** `docs/database/schema.sql` and the ORM models must agree. Phase 1 turns the file into the initial revision; afterwards, every schema change is a new revision plus an updated reference file.
+1. **The reference file is the contract.** `docs/database/schema.sql` and the ORM models must agree. Phase 1 turns the file into the initial revision; afterwards, every structural change is a new revision plus an updated reference file. A revision that changes no structure — `0002_runtime_schema_revision` is a single grant — does not touch the frozen, checksummed file, and `scripts/schema_gate.py db-db` keeps proving that what the migrations build is structurally identical to it.
 2. **Drift gate in CI.** `alembic upgrade head` on an empty database → `alembic check` (autogenerate diff) must be empty; a second job applies the generated schema and runs `tests/invariants/phase0_schema_invariants.sql`.
 3. **Naming convention** is configured in `alembic.ini` (`%(table_name)s` + prefixes from §4) so autogenerate produces names matching the reference file.
 4. **Forward-only by default.** `downgrade()` is implemented where it is safe and omitted with an explanatory exception where data loss is unavoidable (e.g. dropping a ledger column); production rollback is by restore, not by downgrade.

@@ -18,6 +18,7 @@ from tests.helpers import (
     API_ROOT,
     fetch_all,
     fetch_scalar,
+    head_revision,
     run_alembic,
     table_names,
 )
@@ -27,7 +28,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.schema, pytest.mark.slow]
 SCHEMA_COPY = API_ROOT / "alembic" / "sql" / "0001_initial_schema.sql"
 REFERENCE = API_ROOT.parent.parent / "docs" / "database" / "schema.sql"
 CHECKSUMS = API_ROOT / "alembic" / "sql" / "CHECKSUMS.txt"
-REVISION = "0001_initial_schema"
+REVISION = head_revision()
 
 
 def _recorded_checksums() -> dict[str, str]:

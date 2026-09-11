@@ -30,7 +30,7 @@ import time
 import urllib.error
 import urllib.request
 
-EXPECTED_REVISION = "0001_initial_schema"
+EXPECTED_REVISION = "0002_runtime_schema_revision"
 EXPECTED_COMPONENTS = {"postgresql": "ok", "redis": "ok"}
 
 
@@ -102,23 +102,33 @@ def _probe(url: str, attempts: int, interval: float, timeout: float) -> object:
         time.sleep(interval)
     if last_payload is not None:
         return last_payload
-    _fail(f"{url} never produced a readiness payload after {attempts} attempts: {last_error}")
+    _fail(
+        f"{url} never produced a readiness payload after {attempts} attempts: {last_error}"
+    )
 
 
 def main(argv: list[str]) -> int:
     if "--url" in argv:
         index = argv.index("--url")
         url = argv[index + 1]
-        attempts = int(argv[argv.index("--attempts") + 1]) if "--attempts" in argv else 20
-        interval = float(argv[argv.index("--interval") + 1]) if "--interval" in argv else 3.0
-        timeout = float(argv[argv.index("--timeout") + 1]) if "--timeout" in argv else 5.0
+        attempts = (
+            int(argv[argv.index("--attempts") + 1]) if "--attempts" in argv else 20
+        )
+        interval = (
+            float(argv[argv.index("--interval") + 1]) if "--interval" in argv else 3.0
+        )
+        timeout = (
+            float(argv[argv.index("--timeout") + 1]) if "--timeout" in argv else 5.0
+        )
         payload = _probe(url, attempts, interval, timeout)
     elif len(argv) == 2:
         path = pathlib.Path(argv[1])
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except OSError as exc:
-            _fail(f"the readiness endpoint did not answer (no payload at {path}): {exc}")
+            _fail(
+                f"the readiness endpoint did not answer (no payload at {path}): {exc}"
+            )
         except json.JSONDecodeError as exc:
             _fail(f"the readiness endpoint returned a non-JSON payload: {exc}")
     else:

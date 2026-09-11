@@ -60,9 +60,9 @@ Expected readiness payload (trimmed):
 
 ```json
 {"status": "ready", "environment": "development",
- "components": [{"name": "postgresql", "status": "ok", "detail": "schema revision 0001_initial_schema"},
+ "components": [{"name": "postgresql", "status": "ok", "detail": "schema revision 0002_runtime_schema_revision"},
                 {"name": "redis", "status": "ok"}],
- "schema_revision": "0001_initial_schema"}
+ "schema_revision": "0002_runtime_schema_revision"}
 ```
 
 The developer administrator (`DEV_ADMIN_USERNAME`) is created **only** when `APP_ENV=development` **and** `DEV_ADMIN_PASSWORD` is non-empty; the seed refuses to run in production, and `Settings` refuses to load a production configuration that carries a development password. This applies to Phase 2 endpoints.

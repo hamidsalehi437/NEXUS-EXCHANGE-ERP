@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.helpers import head_revision
+
 pytestmark = pytest.mark.integration
 
 API = "/api/v1"
@@ -46,12 +48,12 @@ class TestReadiness:
 
     def test_readiness_reports_the_applied_migration_revision(self, api_client: object) -> None:
         body = api_client.get(f"{API}/health/ready").json()
-        assert body["schema_revision"] == "0001_initial_schema"
+        assert body["schema_revision"] == head_revision()
 
     def test_readiness_detail_names_the_schema_revision(self, api_client: object) -> None:
         body = api_client.get(f"{API}/health/ready").json()
         postgres = next(c for c in body["components"] if c["name"] == "postgresql")
-        assert "0001_initial_schema" in postgres["detail"]
+        assert head_revision() in postgres["detail"]
 
 
 class TestVersionAndRuntime:
@@ -60,7 +62,7 @@ class TestVersionAndRuntime:
         assert response.status_code == 200
         body = response.json()
         assert body["api_base_url"] == "/api/v1"
-        assert body["schema_revision"] == "0001_initial_schema"
+        assert body["schema_revision"] == head_revision()
         assert body["python_version"].startswith("3.")
 
     def test_version_never_leaks_a_secret(self, api_client: object) -> None:

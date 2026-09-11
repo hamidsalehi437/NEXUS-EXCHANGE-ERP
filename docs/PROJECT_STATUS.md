@@ -42,7 +42,11 @@ Notes:
 * Phase 2 commits: `2c53a78` (start, last Phase 1 commit) → `f3d4bb6` (implementation, 45 files) →
   `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes) → `58eada2` (hash pin) →
   `19468d2` (CI reference-path fix, defect 13) → `0a45154` (CI check-annotation reporter) →
-  the commit that carries the defect-14 environment fix and this report's revision.
+  `149bd6e` (environment-comment defect 14) → `2e8896a` (readiness probe, defect 15) →
+  the commit that carries the fix for defect 16 (`0002_runtime_schema_revision`) and this report's revision.
+* Phase 2 adds one grant-only migration (`0002_runtime_schema_revision`, decision `D-21` in
+  `docs/database/SCHEMA.md`) and no structural schema change: the approved Phase 0 schema,
+  its invariants and the frozen reference DDL are unchanged.
 * Phase 3 has **not** started and must not start before Phase 2 is approved.
 
 ## 2. Reporting rule for every phase from Phase 2 onward
