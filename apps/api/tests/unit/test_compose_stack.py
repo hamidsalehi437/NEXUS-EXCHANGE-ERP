@@ -15,6 +15,7 @@ anything about the real thing.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -517,6 +518,28 @@ class TestCiWorkflowPaths:
     def _steps() -> list[dict[str, Any]]:
         workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
         return [step for job in workflow["jobs"].values() for step in job.get("steps", [])]
+
+    def test_compose_stack_commands_report_their_failure_evidence(self) -> None:
+        """The two in-stack commands must run through the failure-reporting wrapper.
+
+        A bare ``docker compose exec`` step that exits 1 leaves a reviewer with the exit
+        code and nothing else when the job log cannot be retrieved. The wrapper turns the
+        tail of the failing output into a check annotation, which is always readable
+        through the API, so the diagnostic cannot be lost with the log.
+        """
+        wrapper = SCRIPTS_DIR / "ci_exec_report.sh"
+        assert wrapper.is_file(), "scripts/ci_exec_report.sh is missing"
+        assert os.access(wrapper, os.X_OK), "scripts/ci_exec_report.sh is not executable"
+
+        asserted = 0
+        for step in self._steps():
+            command = step.get("run", "")
+            if "docker compose exec -T api" in command:
+                asserted += 1
+                assert "scripts/ci_exec_report.sh" in command, (
+                    f"step {step.get('name')!r} runs a stack command without the wrapper: {command}"
+                )
+        assert asserted == 2, f"expected the two in-stack commands, found {asserted}"
 
     def test_every_working_directory_exists(self) -> None:
         missing = [
