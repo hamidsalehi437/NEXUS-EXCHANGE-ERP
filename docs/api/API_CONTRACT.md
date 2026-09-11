@@ -172,7 +172,7 @@ Every non-2xx response:
 | `IDEMPOTENCY_KEY_REUSED` | 409 | Same `Idempotency-Key` with a different request body |
 | `IDEMPOTENCY_IN_PROGRESS` | 409 | Original request still executing |
 | `IDEMPOTENCY_KEY_REQUIRED` | 400 | A money-moving endpoint was called without an `Idempotency-Key` header (PART 40) |
-| `INSUFFICIENT_BALANCE` | 409 | Ledger/cash position would go negative (`NEX01`) |
+| `INSUFFICIENT_BALANCE` | 409 | A posting would deliver more of a currency than the branch holds (`details.reason` = `NO_POSITION` or `QUANTITY_EXCEEDED` with the shortfall). Raised by the exchange disposal guard and by the generic journal door's inventory guard, and independently by the database for a physical cash row (`NEX01`) |
 | `JOURNAL_UNBALANCED` | 500 | Defect: unbalanced entry rejected by the database (`NEX02`) |
 | `INVALID_STATUS_TRANSITION` | 409 | Illegal state move (`NEX03`) |
 | `ALREADY_REVERSED` | 409 | Document already reversed (`NEX04`) |
@@ -185,6 +185,7 @@ Every non-2xx response:
 | `CASH_SESSION_NOT_OPEN` | 409 | Cash movement or close without an open session |
 | `CASH_SESSION_ALREADY_OPEN` | 409 | Second open session for the same device |
 | `RATE_NOT_FOUND` | 422 | No quote in force for the pair/branch |
+| `EXCHANGE_DIRECTION_INVALID` | 422 | The currencies of an exchange cannot describe a deal: the same currency on both sides (`details.reason` = `SAME_CURRENCY`, field `to_currency_id`) or the functional currency as the delivered side (`FUNCTIONAL_CURRENCY_NOT_DELIVERABLE`, field `from_currency_id`). Additive v1 code, Phase 4 Gate Review regression |
 | `RATE_OUT_OF_TOLERANCE` | 409 | Supplied rate deviates beyond tolerance (`tolerance_bps`) |
 | `CURRENCY_INACTIVE` | 422 | Currency is deactivated |
 | `BRANCH_INACTIVE` | 422 | Branch is deactivated |

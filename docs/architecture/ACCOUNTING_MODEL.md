@@ -267,6 +267,8 @@ authorise (permission for the reference type)      → PERMISSION_DENIED (audite
 assert branch scope (actor's branch, or group-wide) → FORBIDDEN_SCOPE   (audited)
 lock every touched account row, in (account, currency) order
 resolve context (base currency, stored positions, carrying rate)
+validate the exchange direction (document paths)   → EXCHANGE_DIRECTION_INVALID
+guard the inventory positions (generic door)       → INSUFFICIENT_BALANCE
 validate money (Decimal, exact 10-dp scale, within NUMERIC(30,10) bounds)
 validate the entry (≥ 2 lines, single-sided, debit = credit exactly)
 claim the idempotency key (if the endpoint requires one)
@@ -280,7 +282,10 @@ Order matters and is deliberate: the account rows are locked **before** any read
 the posting depends on (`position()`, the carrying rate). A lock taken after the read it
 protects would let two concurrent transactions both read a pre-transaction position and
 both post a disposal — which is exactly the defect
-`test_accounting_concurrency.py::TestConcurrentDisposals` reproduces.
+`test_accounting_concurrency.py::TestConcurrentDisposals` reproduces. Every public
+posting method therefore locks the *whole* set of accounts it may touch — including the
+FX account a residual may add — at the start of its transaction, and the guard that reads
+a position (§13.7) reads it under that lock.
 
 ### 13.3 Idempotency
 
@@ -327,6 +332,37 @@ transaction, so it survives the rollback of the request that caused it.
 `rebuild_account_balances()` is asserted to be a no-op on a ledger whose cache is
 current. Every response states its `source` so a reader can tell which immutable table
 produced the numbers.
+
+### 13.7 Boundary guards (Gate Review regression)
+
+Two boundary rules were added after the independent Gate Review of this phase; both are
+described in full, with their evidence, in
+[`../phases/PHASE4_REPORT.md`](../phases/PHASE4_REPORT.md) §40.
+
+**Exchange direction.** §6.2 and §6.3 both describe the *delivered* currency as foreign,
+so `post_exchange` refuses a pair that cannot describe a deal before it prices anything:
+the same currency on both sides (`SAME_CURRENCY`) or the functional currency as the
+delivered side (`FUNCTIONAL_CURRENCY_NOT_DELIVERABLE`), both `422
+EXCHANGE_DIRECTION_INVALID` naming the offending field. Without this the SELL case *posted*
+a balanced but impossible entry, and the BUY case was refused only accidentally, by the
+disposal guard of the *other* drawer reading an empty position (`INSUFFICIENT_BALANCE`).
+
+**Inventory positions through the generic door.** `create_journal_entry` sets
+`guard_inventory` on its posting plan, and `_post` runs `_assert_inventory_positions`
+before the first insert: for every **inventory** account (§2: an asset account bound to a
+currency) the plan's lines contribute `(debit - credit) / rate` — the expression
+PostgreSQL uses to generate `foreign_amount` — and a negative outcome is refused with the
+same vocabulary the SELL path uses (`NO_POSITION`, or `QUANTITY_EXCEEDED` with the
+shortfall). Invariant I-5 therefore holds for the ledger itself, not only for the physical
+`cash_movements` row.
+
+*Scope of the guard.* Document paths keep their own rules, because their physical side is
+written by the phase that owns the document and `ct_cash_movements_non_negative`
+(`NEX01`) is the authority there: a BUY pays out of a drawer whose cash movement is
+written in the same transaction, and a reversal mirrors an entry that already exists.
+What the generic door may not do is move a position that no document vouches for — which
+is the hole the Gate Review found (a manual entry had driven a drawer to
+`-7.1428571429` units with a balanced, immutable, audited journal to prove it).
 
 ## 14. Rate snapshot — protection review and decision D-4-1
 

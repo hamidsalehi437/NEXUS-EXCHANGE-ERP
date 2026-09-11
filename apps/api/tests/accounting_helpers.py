@@ -602,6 +602,70 @@ def totals(database: str) -> tuple[Decimal, Decimal]:
     return Decimal(str(row["d"])), Decimal(str(row["c"]))
 
 
+@dataclass(frozen=True, slots=True)
+class FinancialState:
+    """Everything a *refused* posting must leave exactly as it was.
+
+    Counts, ledger-wide totals and each account's position, captured before and after a
+    posting that is supposed to be refused. A test that proves "nothing was written" has to
+    read the database rather than the service's return value: ``entries`` and ``lines`` are
+    the tables, ``audit_rows`` and ``idempotency_rows`` are the side effects a keyed or
+    denied request could leave behind, and ``quantities``/``functional`` are the positions
+    the money would have moved.
+    """
+
+    entries: int
+    lines: int
+    audit_rows: int
+    idempotency_rows: int
+    total_debit: Decimal
+    total_credit: Decimal
+    quantities: dict[str, Decimal]
+    functional: dict[str, Decimal]
+
+    @property
+    def balanced(self) -> bool:
+        """The ledger-wide invariant, so a test can assert it on the *after* snapshot."""
+        return self.total_debit == self.total_credit
+
+
+def financial_state(database: str, accounts: Iterable[uuid.UUID]) -> FinancialState:
+    """Snapshot the ledger for the given accounts (every requested account is present)."""
+    wanted = [str(account) for account in accounts]
+    rows = read(
+        database,
+        """
+        SELECT account_id,
+               COALESCE(SUM(debit - credit), 0) AS functional_balance,
+               COALESCE(
+                   SUM(CASE WHEN debit > 0 THEN foreign_amount ELSE -foreign_amount END), 0
+               ) AS foreign_quantity
+          FROM journal_lines
+         GROUP BY account_id
+        """,
+    )
+    by_account = {str(row["account_id"]): row for row in rows}
+    quantities = {key: Decimal("0") for key in wanted}
+    functional = {key: Decimal("0") for key in wanted}
+    for key in wanted:
+        row = by_account.get(key)
+        if row is None:
+            continue
+        quantities[key] = Decimal(str(row["foreign_quantity"]))
+        functional[key] = Decimal(str(row["functional_balance"]))
+    debit, credit = totals(database)
+    return FinancialState(
+        entries=count(database, "journal_entries"),
+        lines=count(database, "journal_lines"),
+        audit_rows=count(database, "audit_logs"),
+        idempotency_rows=count(database, "idempotency_keys"),
+        total_debit=debit,
+        total_credit=credit,
+        quantities=quantities,
+        functional=functional,
+    )
+
+
 def audit_actions_for(database: str, entity_id: uuid.UUID) -> list[str]:
     rows = read(
         database,

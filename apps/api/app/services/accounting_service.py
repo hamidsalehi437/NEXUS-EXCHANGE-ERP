@@ -66,6 +66,7 @@ from app.core.exceptions import (
     CurrencyInactiveError,
     DataIntegrityError,
     DuplicateResourceError,
+    ExchangeDirectionError,
     ForbiddenScopeError,
     InsufficientBalanceError,
     JournalUnbalancedError,
@@ -511,6 +512,12 @@ class _PostingPlan:
     transaction_date: dt.datetime = field(default_factory=lambda: dt.datetime.now(tz=dt.UTC))
     device_id: uuid.UUID | None = None
     rate_snapshot: RateSnapshot | None = None
+    # Set by the *generic* door (``create_journal_entry``) and by nothing else: a manual
+    # journal states its own rates and is not backed by a business document, so it is the
+    # one path where the ledger has to police its own physical positions (§6.3's guard,
+    # invariant I-5). Document paths keep their own rules and write the ``cash_movements``
+    # row whose ``NEX01`` constraint is the physical authority for them.
+    guard_inventory: bool = False
 
 
 def _functional_balance(normal_balance: str | None, debit: Decimal, credit: Decimal) -> Decimal:
@@ -683,10 +690,20 @@ class AccountingService:
         This is the generic door into the ledger. The posting rules for exchange, cash and
         expenses go through it too, so there is exactly one place where an entry is
         validated, inserted, audited and made idempotent.
+
+        Unlike a *document* posting — which is backed by the ``cash_movements`` row whose
+        ``ct_cash_movements_non_negative`` constraint is the physical authority — a manual
+        entry has no document behind it, so the ledger polices its own physical positions
+        here: no line may deliver more of a currency than the branch's inventory account
+        holds (``ACCOUNTING_MODEL.md`` §6.3, invariant I-5). Before the Gate Review
+        regression this door had no such guard and a manual credit to an inventory account
+        drove its position negative; see §13 of the model and the Gate Review section of
+        ``docs/phases/PHASE4_REPORT.md``.
         """
         reference_type = _reference_type(reference_type)
         await self._authorize(reference_type, actor)
         plan = _PostingPlan(
+            guard_inventory=True,
             reference_type=reference_type,
             reference_id=reference_id,
             branch_id=branch_id,
@@ -760,6 +777,15 @@ class AccountingService:
         For the documented cases — either side being the functional currency — this
         reduces *exactly* to the model's arithmetic and its worked examples, which the
         suite asserts line by line.
+
+        The **direction** is validated first, and on its own terms: both exchange types
+        deliver a *foreign* currency (§6.2 "business acquires foreign currency", §6.3
+        "business disposes foreign currency"), so a deal that delivers the functional
+        currency, or that names one currency on both sides, is refused with
+        ``EXCHANGE_DIRECTION_INVALID`` — a code of its own rather than the
+        ``INSUFFICIENT_BALANCE`` or ``RATE_NOT_FOUND`` an invalid direction used to trip
+        over, which told the caller the wrong story and could disappear entirely (a SELL
+        that delivered the functional currency used to *post*).
         """
         transaction_type = _transaction_type(transaction_type)
         await self._authorize("EXCHANGE_TRANSACTION", actor)
@@ -793,6 +819,12 @@ class AccountingService:
                 currency=from_currency,
                 field="from_amount",
                 transaction_type=transaction_type,
+            )
+            _assert_exchange_direction(
+                transaction_type=transaction_type,
+                from_currency=from_currency,
+                to_currency=to_currency,
+                base=base,
             )
 
             # What one unit of the currency the business *receives* is worth in functional
@@ -1531,7 +1563,9 @@ class AccountingService:
                 details={"reason": "ACTOR_REQUIRED"},
             )
         totals = self.validate_balanced_entry(plan.lines)
-        await self._check_ledger_context(session, plan=plan)
+        accounts = await self._check_ledger_context(session, plan=plan)
+        if plan.guard_inventory:
+            await self._assert_inventory_positions(session, plan=plan, accounts=accounts)
         guard = await self._claim_idempotency(
             session, plan=plan, actor=actor, idempotency_key=idempotency_key, endpoint=endpoint
         )
@@ -1659,7 +1693,9 @@ class AccountingService:
         replay = await guard.claim()
         return guard if replay is None else JournalEntryView.from_payload(replay.body)
 
-    async def _check_ledger_context(self, session: AsyncSession, *, plan: _PostingPlan) -> None:
+    async def _check_ledger_context(
+        self, session: AsyncSession, *, plan: _PostingPlan
+    ) -> dict[uuid.UUID, Account]:
         """Every rule a line must satisfy before it can touch the ledger.
 
         This is where "valid account/currency relationships" and "branch boundaries" stop
@@ -1668,6 +1704,9 @@ class AccountingService:
         currency, and its branch must be the entry's branch (or the account must be
         group-wide). A posting to a branch that is not active is refused — trading at a
         closed branch is how a ledger stops matching reality.
+
+        Returns the accounts it loaded, so a caller that needs the same rows (the generic
+        door's inventory guard) reads each account once per posting instead of twice.
         """
         if plan.reference_type in REFERENCE_TYPES_REQUIRING_DOCUMENT and plan.reference_id is None:
             raise ValidationError(
@@ -1771,6 +1810,8 @@ class AccountingService:
                         "fields": [{"field": f"lines[{index}].currency_id", "code": "inactive"}]
                     }
                 )
+
+        return accounts
 
     async def _functional_rate(
         self,
@@ -1932,6 +1973,73 @@ class AccountingService:
                 },
             )
         return divide_money(value, quantity)
+
+    async def _assert_inventory_positions(
+        self,
+        session: AsyncSession,
+        *,
+        plan: _PostingPlan,
+        accounts: Mapping[uuid.UUID, Account],
+    ) -> None:
+        """No manual posting may deliver more of a currency than the branch holds.
+
+        This is §6.3's disposal guard applied to the **generic** door. ``_carrying_rate``
+        enforces it for a SELL, where the ledger prices the delivery itself; a manual entry
+        states its own rate instead, so the guard has to be stated in quantities: a line's
+        contribution to a position is ``(debit - credit) / rate`` — exactly the expression
+        PostgreSQL uses to generate ``journal_lines.foreign_amount`` — and the sum over an
+        account's lines may not take that account's holding below zero (invariant I-5).
+
+        Only *inventory* accounts are guarded: an asset account **bound to a currency**, the
+        model's definition of a place that holds a position (§2). A functional or control
+        account (``3000`` capital, ``2000`` customer advance, ``1100`` transit) records
+        functional value and has no physical quantity to run out of; a liability that goes
+        negative is a receivable, not a missing banknote. The guard therefore refuses
+        exactly what the physical constraint refuses, and nothing else.
+
+        The accounts are already locked by ``_check_ledger_context`` (in the same order the
+        lines are inserted), so the position read here cannot be overtaken by a concurrent
+        posting: two manual disposals of one drawer queue and the second one sees the first
+        one's result.
+        """
+        disposals: dict[uuid.UUID, Decimal] = {}
+        for line in plan.lines:
+            account = accounts.get(line.account_id)
+            if account is None or account.currency_id is None:
+                continue
+            if (account.account_type or "").strip().upper() != "ASSET":
+                continue
+            # One line's physical contribution, quantized the way the stored generated
+            # column is: a debit adds units, a credit removes them.
+            contribution = divide_money(line.debit - line.credit, line.exchange_rate)
+            disposals[line.account_id] = disposals.get(line.account_id, Decimal(0)) + contribution
+
+        ledger = LedgerRepository(session)
+        for account_id, contribution in disposals.items():
+            if contribution >= 0:
+                continue
+            position = await ledger.position(account_id=account_id, branch_id=plan.branch_id)
+            held = Decimal(position["foreign_quantity"])
+            if held + contribution >= 0:
+                continue
+            delivered = contribution.copy_abs()
+            details: dict[str, Any] = {
+                "account_id": str(account_id),
+                "foreign_quantity": format_decimal(held),
+                "disposing_quantity": format_decimal(delivered),
+                "branch_id": str(plan.branch_id) if plan.branch_id else None,
+            }
+            if held <= 0:
+                details["reason"] = "NO_POSITION"
+                raise InsufficientBalanceError(
+                    "This branch holds no position to deliver from.", details=details
+                )
+            details["shortfall"] = format_decimal(money_difference(delivered, held))
+            details["reason"] = "QUANTITY_EXCEEDED"
+            raise InsufficientBalanceError(
+                "This branch does not hold that much of the currency being delivered.",
+                details=details,
+            )
 
     async def _load_view(
         self, session: AsyncSession, entry_id: uuid.UUID, *, with_lines: bool = True
@@ -2161,6 +2269,53 @@ def _non_negative(value: Decimal, *, field: str) -> Decimal:
             details={"fields": [{"field": field, "code": "negative"}]},
         )
     return amount
+
+
+def _assert_exchange_direction(
+    *,
+    transaction_type: str,
+    from_currency: Currency,
+    to_currency: Currency,
+    base: Currency,
+) -> None:
+    """Refuse currency pairs that cannot describe an exchange (``ACCOUNTING_MODEL.md`` §6.2/§6.3).
+
+    Three refusals, each naming the field it belongs to so an operator can fix the document
+    rather than guess:
+
+    * the same currency on both sides — nothing is exchanged;
+    * the functional currency as the **delivered** side (``from_currency``) — a deal whose
+      "foreign" leg is the money we measure everything in. A customer buying foreign
+      currency from us is a SELL of that foreign currency (§6.3), not a BUY of the afghani;
+    * therefore every accepted deal has a foreign ``from_currency`` and a ``to_currency``
+      that is the functional currency or another foreign one.
+
+    ``transaction_type`` is part of the error's context because the same pair can be valid
+    for one direction and impossible for the other.
+    """
+    if from_currency.id == to_currency.id:
+        raise ExchangeDirectionError(
+            f"A {transaction_type} cannot exchange {from_currency.code} for itself.",
+            details={
+                "fields": [{"field": "to_currency_id", "code": "same_currency"}],
+                "reason": "SAME_CURRENCY",
+                "transaction_type": transaction_type,
+                "from_currency_id": str(from_currency.id),
+                "to_currency_id": str(to_currency.id),
+            },
+        )
+    if from_currency.id == base.id:
+        raise ExchangeDirectionError(
+            f"A {transaction_type} cannot deliver the functional currency {base.code}.",
+            details={
+                "fields": [{"field": "from_currency_id", "code": "functional_currency"}],
+                "reason": "FUNCTIONAL_CURRENCY_NOT_DELIVERABLE",
+                "transaction_type": transaction_type,
+                "functional_currency_code": base.code,
+                "from_currency_id": str(from_currency.id),
+                "to_currency_id": str(to_currency.id),
+            },
+        )
 
 
 def _assert_cash_quantity(

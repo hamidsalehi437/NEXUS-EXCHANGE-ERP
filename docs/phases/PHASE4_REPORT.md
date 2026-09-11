@@ -43,6 +43,9 @@ The phase was executed under the master prompt's rules for a critical financial-
 * do not mark the phase APPROVED; do not start Phase 5.
 
 The rate-snapshot review is answered in §13: **no schema change**, with the empirical evidence in §25.
+The independent Gate Review that followed the first submission found two boundary holes
+(invalid exchange directions, and the generic journal door bypassing the inventory guard);
+both are fixed and documented in **§40** with the re-verification of the whole phase.
 
 ## 3. Starting commit
 
@@ -65,6 +68,21 @@ The hash is pinned here by the documentation-only finalisation commit that follo
 same pattern Phase 2 and Phase 3 used), which is also where the implementation commit's CI
 runs are recorded. No source file differs between the implementation commit and that
 finalisation commit.
+
+**Gate Review round (supersedes the table above for the current tree).** The independent
+Gate Review of `da0c9ff` found two financial boundary holes, fixed in §40. The current tree
+is therefore:
+
+| Field | Value |
+| --- | --- |
+| Base | `da0c9ff261123fd41b2806052adb1f82ecd21f33` (first submission, reviewed) |
+| Finalisation of the first submission | `6f95a37` — *docs(phase4): pin the implementation commit and record the green CI runs* |
+| Gate Review fix commit | *feat(accounting): close the exchange-direction and inventory-position holes* — hash pinned by the finalisation commit at the top of the branch |
+| Guidance | the reviewer's `PHASE 4 FINAL COMPLETION` brief: two holes, dedicated regression tests, full re-verification, no Phase 5 |
+| Result | **1173 tests pass, 0 failed, 0 skipped**, twice independently (§40.3) |
+
+Everything else in this report describes the reviewed engine and remains true of the current
+tree; §40 records what the review changed.
 
 ## 5. Files created and modified
 
@@ -454,6 +472,8 @@ service is used.
 | D4-8 | Test-harness defect: `busy_world.ids["buy_usd"]` was resolved by "the newest `EXCHANGE_TRANSACTION`", which is the EUR entry (rate 75, not the USD entry at 70) — the rate assertions were measuring the wrong entry | the new rate-snapshot tests failed with `Decimal('75') != Decimal('70')` | the fixture now stores the ids returned by the service, never a re-query | `test_accounting_integrity.py` |
 | D4-9 | Test-isolation defect: the journal date-range test relied on a five-day window over the shared branch and the default page size, so other suites' "now" postings pushed its entry off the page | the suite passed alone and failed in a full run | a window only that posting can fall into (`hours_ago=3 … hours_ago=1`) plus `assert total == len(visible)`, which fails loudly if the page is truncated again | `test_accounting_posting.py::TestAccountingDates` |
 | D4-10 | **Harness defect:** the currency-code generator drew from only 26⁴ = 456,976 codes. With ~25 codes drawn per session the birthday probability is ~0.07 %, and a full-suite run eventually failed with `409 DUPLICATE_RESOURCE` on a freshly drawn code — a Phase 3 test failing for a reason that had nothing to do with Phase 3 | the first full regression run | `unique_currency_code()` now draws `"T"` + **8** letters (26⁸ ≈ 2.1 × 10¹¹); the generator's own comment records the arithmetic | `tests/integration/test_masterdata_workflow.py` + `test_masterdata_currencies.py` (31 passed) and the final full run |
+| D4-12 | **Gate Review hole A — an invalid exchange direction reached financial posting.** `post_exchange` validated amounts but never the direction the document describes: a SELL delivering the functional currency **posted** a balanced entry for a deal that cannot exist, a pair naming one currency twice **posted** too, and a BUY delivering the functional currency was refused only accidentally — by the disposal guard of the *other* drawer reading an empty position (`INSUFFICIENT_BALANCE`, a message about a missing position) | the independent Gate Review of `da0c9ff`; reproduced in this round with a funded drawer, a published quote and a valid amount | `_assert_exchange_direction` refuses both impossible shapes with their own code `EXCHANGE_DIRECTION_INVALID` (422): `SAME_CURRENCY` (field `to_currency_id`) and `FUNCTIONAL_CURRENCY_NOT_DELIVERABLE` (field `from_currency_id`), before any price is computed | `test_accounting_exchange_direction.py` (13 tests) + the rewritten unquoted-currency test |
+| D4-13 | **Gate Review hole B — the generic journal door bypassed the inventory guard.** `create_journal_entry` validated accounts, currencies, postability, branches and the balance proof, but not the **positions** its lines moved: a manual credit drove an inventory account to `-7.1428571429` units, with a balanced, immutable, audited entry to prove it. The disposal guard lived in `_carrying_rate`, which only the exchange path calls, and it was expressed as a rate rather than a quantity — so a manual entry, which states its own rate, never met it. The generic door also locked its accounts *after* the first position read, so a guard alone would have been racy | the independent Gate Review of `da0c9ff`; reproduced in this round (empty drawer, above-position drawer, two-line aggregate, race) | the generic door sets `guard_inventory` on its posting plan; `_post` runs `_assert_inventory_positions` after the shared context validation and before the first insert, summing `(debit - credit) / rate` per inventory account and refusing a negative outcome (`NO_POSITION` / `QUANTITY_EXCEEDED` with the shortfall). The door now locks every account it will touch at the start of its transaction, before the guard reads a position | `test_accounting_generic_journal_guard.py` (11 tests) |
 | D4-11 | **Harness defect:** `TestAccountTree::test_the_listing_reports_who_has_children` looked its two accounts up in a global `?limit=500` page. Phase 4 scaffolds a chart per scenario, so the shared session database outgrew the page and the lookup raised `KeyError` | the second full regression run | the test now asserts on listings **filtered by the parent it created** (children of the root, children of the branch) plus the detail endpoints — deterministic regardless of how many accounts other suites create, and a stronger statement than the page lookup | `tests/integration/test_masterdata_accounts.py` (28 passed) and the final full run |
 
 Each of these is fixed in production code or in the harness — never by weakening an
@@ -494,6 +514,8 @@ constant so the diff contains no credential-shaped strings of its own making.
 | `tests/integration/test_accounting_concurrency.py` | 11 | Racing disposals, racing reversals, racing duplicate postings, shared-account posts (no deadlock), rollback on failure |
 | `tests/integration/test_accounting_scope.py` | 16 | Posting and reading across branches, group-wide readers, 404-not-403 for other branches, 403 for an explicit out-of-scope filter, auditor reads |
 | `tests/integration/test_accounting_integrity.py` | 24 | The ledger's own invariants on an accumulated book: Σdebit = Σcredit per entry and ledger-wide, cache drift and deterministic rebuild, view directions, §8 identities, non-negative cash (`NEX01`), audit chain, reversal linkage, rate snapshot, `NUMERIC(30,10)` edges |
+| `tests/integration/test_accounting_exchange_direction.py` | 13 | **Gate Review hole A:** both exchange types refuse the functional currency as the delivered side and refuse one currency on both sides; a foreign↔foreign pair is still allowed; a refused direction leaves no entry, no line, no position change and no idempotency row; valid BUY, SELL and foreign↔foreign exchanges still post line by line |
+| `tests/integration/test_accounting_generic_journal_guard.py` | 11 | **Gate Review hole B:** the generic door refuses a delivery from an empty drawer, above the position, and in aggregate across two lines; allows an exact delivery (ending at zero) and ordinary non-inventory journals; guards each currency by its own position and each branch by its own holdings; a refusal rolls back all financial state and does not finalize the key; two concurrent deliveries cannot overdraw |
 
 `tests/accounting_helpers.py` (630 lines) provides the shared harness: `World` (branch, chart slice, currencies, actors), scenario and race runners, and raw-SQL readers that let a test assert the database directly rather than trusting the service.
 
@@ -510,7 +532,7 @@ env -u DATABASE_URL -u DATABASE_MIGRATION_URL -u APP_ENV PYTHONPATH=. \
 
 # the accounting suites alone
 python -m pytest tests -m accounting -q
-#   186 passed (186 of the 243 new tests carry the marker; the 57 unit tests are `unit`)
+#   210 passed (the 57 unit tests of the money rules carry the `unit` marker instead)
 
 # collection, per file
 python -m pytest tests/unit/test_accounting_rules.py -q                       # 57 passed
@@ -521,6 +543,8 @@ python -m pytest tests/integration/test_accounting_idempotency.py -q           #
 python -m pytest tests/integration/test_accounting_concurrency.py -q           # 11 passed
 python -m pytest tests/integration/test_accounting_scope.py -q                 # 16 passed
 python -m pytest tests/integration/test_accounting_integrity.py -q             # 24 passed
+python -m pytest tests/integration/test_accounting_exchange_direction.py -q    # 13 passed
+python -m pytest tests/integration/test_accounting_generic_journal_guard.py -q # 11 passed
 ```
 
 ## 27. Regression of Phases 0–3
@@ -534,6 +558,9 @@ The Phase 3 baseline was **905 passed** at `3a985fd`. Phase 4 adds **243 tests**
 | Full run 2 | 1147 passed, **1 failed** | `test_masterdata_accounts.py::TestAccountTree::test_the_listing_reports_who_has_children` read a global `?limit=500` page that the accumulated session database had outgrown → fixed as D4-11 |
 | Full run 3 | **1148 passed, 0 failed, 0 skipped** in 165.04 s, `EXIT=0` | the run this report quotes |
 | Full run 4 (final tree) | **1148 passed, 0 failed, 0 skipped** in 172.38 s, `EXIT=0` | an independent second green full run on the exact tree being committed — two consecutive clean runs is the answer to the two order-dependent flakes above |
+| Gate Review run 1 | **1173 passed, 0 failed, 0 skipped** in 180.64 s, `EXIT=0` | on the fixed tree, with the two new boundary suites |
+| Gate Review run 2 | **1173 passed, 0 failed, 0 skipped** in 172.22 s, `EXIT=0` | the independent second run the review brief requires |
+| Gate Review run 3 (final tree) | **1173 passed, 0 failed, 0 skipped** in 167.69 s, `EXIT=0` | the exact tree being committed, after the formatting pass |
 
 Both failures were in *test harness* code, not in the product, and neither was silenced: the currency generator now draws from 26⁸ codes instead of 26⁴, and the account-tree test asserts on listings filtered by the parent it created (a stronger statement than the page lookup it replaced). Every Phase 0–3 suite otherwise passes unchanged, and no assertion was loosened anywhere.
 
@@ -723,20 +750,233 @@ Requirements of the phase brief:
 | 19 | Reversals fully auditable and balanced | Reversal mirror/link/uniqueness tests and the reversal audit test |
 | 20 | Database and application must not contradict each other | One SQLSTATE→error mapping shared by the service and the HTTP layer (§23); both directions tested |
 
+Gate Review brief items (the reviewer's `PHASE 4 FINAL COMPLETION`):
+
+| Item | Evidence |
+| --- | --- |
+| Hole A fixed (invalid exchange direction cannot reach financial posting) | §40.1 — `EXCHANGE_DIRECTION_INVALID` with `SAME_CURRENCY` / `FUNCTIONAL_CURRENCY_NOT_DELIVERABLE` |
+| Hole A dedicated regression tests | §40.1 table — `test_accounting_exchange_direction.py`, 13 tests, every one with a valid quote, funded drawers and a valid amount |
+| Hole B fixed (the generic door cannot create a negative position) | §40.2 — `guard_inventory` + `_assert_inventory_positions` under the production lock |
+| Hole B dedicated regression tests | §40.2 table — `test_accounting_generic_journal_guard.py`, 11 tests |
+| Existing affected tests audited and repaired | §40.3 — three tests: one that asserted an impossible state, one that passed for the wrong reason, one fixture that had to deactivate the branch it created |
+| Full suite run 1 and independent run 2 | §40.3 — 1173 passed / 1173 passed, 0 failed, 0 skipped |
+| Accounting suite, Ruff, format, MyPy, fresh migration, ORM gate, reference gate, Phase 0 invariants, seed idempotency, concurrency | §40.3 — all re-run after the fixes |
+| Documentation updated, Phase 4 not approved, Phase 5 not started | §40, `docs/PROJECT_STATUS.md` v1.5, README, `ACCOUNTING_MODEL.md` §13.2/§13.7, `API_CONTRACT.md` §4 |
+
 Phase-brief specific items:
 
 | Item | Evidence |
 | --- | --- |
 | Explicit review of the rate snapshot/reference (with a decision) | §13, decision D-4-1: no schema change, with the reasoning table and the tests in `TestTheRateSnapshotIsProtected` |
 | No silent schema change | §11, §30, §31: no revision, reference file checksum unchanged, both gates MATCH |
-| Accounting test list (balanced/unbalanced/zero/debit-only/credit-only/multi-line/multi-currency/functional conversion/`foreign_amount`/account-currency validation/branch authorisation/immutability/UPDATE and DELETE rejection/reversal creation, balance and linkage/duplicate and idempotent posting/concurrency/rollback/audit events/unauthorised and forbidden posting/historical protection/accounting dates/precision and rounding/large and small decimals/database-level invariants) | §25 — every item maps to named tests across the eight files |
-| Complete Phase 0–3 regression | §27 — 1148 passed, 0 failed |
+| Accounting test list (balanced/unbalanced/zero/debit-only/credit-only/multi-line/multi-currency/functional conversion/`foreign_amount`/account-currency validation/branch authorisation/immutability/UPDATE and DELETE rejection/reversal creation, balance and linkage/duplicate and idempotent posting/concurrency/rollback/audit events/unauthorised and forbidden posting/historical protection/accounting dates/precision and rounding/large and small decimals/database-level invariants) | §25 — every item maps to named tests across the ten suites |
+| Complete Phase 0–3 regression | §27 — 1148 passed at the reviewed tree, and 1173 passed in the Gate Review round; 0 failed in both |
 | Documentation (`PHASE4_REPORT.md`, `PROJECT_STATUS.md`, README, contract, model, schema reference) | this file plus the four updated documents listed in §5 |
 
-## 40. Statement
+## 40. Gate Review Regression — Two Financial Boundary Holes
+
+The independent Gate Review of `da0c9ff` found two holes through which a *balanced*,
+*immutable*, *audited* journal entry could record a financially impossible state. Both were
+reproduced in this round before anything was changed, both are now refused by dedicated
+guards with their own error codes, and both are pinned by new suites that read the database
+rather than the service's return value.
+
+The reviewer's brief is the guidance for this section: fix the hole, prove the fix with tests
+that reach the intended boundary, re-run everything, do not start Phase 5.
+
+### 40.1 Hole A — an invalid exchange direction reached financial posting
+
+**Vulnerability.** `AccountingService.post_exchange` accepted a currency pair that cannot
+describe an exchange:
+
+| Direction | Behaviour before the fix (measured, not inferred) |
+| --- | --- |
+| `SELL`, delivered currency = functional (AFN) | **posted** a balanced entry: the delivered leg was priced at a carrying rate of 1 ("one afghani is one afghani") and the received leg at `amount x rate`, so the ledger recorded a deal that cannot exist |
+| `BUY`, delivered currency = functional (AFN) | refused — but with `INSUFFICIENT_BALANCE / NO_POSITION` on the *other* drawer, i.e. the message said "this branch holds no position to deliver from" about a request whose problem was its direction; with a funded drawer it posted too |
+| `BUY`/`SELL`, same currency on both sides | **posted** a self-cancelling pair of lines on one drawer |
+
+**Root cause.** `ACCOUNTING_MODEL.md` §6.2 and §6.3 define both exchange types with the
+**delivered** currency foreign — "business acquires foreign currency" / "business disposes
+foreign currency" — but the service validated only the deal's *values* (amount, rate,
+commission, date) and never the *direction* those values were meant to describe. Nothing
+downstream could catch it: the arithmetic of a nonsense deal is still arithmetic, so the
+entry balanced and the deferred constraint trigger had nothing to object to.
+
+**Fix.** `_assert_exchange_direction` runs as soon as both currencies are loaded, before any
+price is computed, and refuses the two impossible shapes with their own code —
+`EXCHANGE_DIRECTION_INVALID` (422) — naming the offending field:
+
+| `details.reason` | Condition | Field |
+| --- | --- | --- |
+| `SAME_CURRENCY` | `from_currency_id == to_currency_id` | `to_currency_id` |
+| `FUNCTIONAL_CURRENCY_NOT_DELIVERABLE` | `from_currency_id == base_currency_id` | `from_currency_id` |
+
+A pair in which neither side is the functional currency stays legal (§6.2's `T = base or
+other`), and the code is separate from `VALIDATION_ERROR` and `INSUFFICIENT_BALANCE` on
+purpose: an impossible direction must never be reported as a missing position or a missing
+quote again. `docs/api/API_CONTRACT.md` §4 and `docs/architecture/ACCOUNTING_MODEL.md`
+§13.7 record it.
+
+**Exact regression tests** — `tests/integration/test_accounting_exchange_direction.py`
+(13 tests), every one of them run with a **published quote**, **funded drawers** and an
+otherwise valid deal, so the refusal can only come from the direction:
+
+| Test | What it proves |
+| --- | --- |
+| `TestInvalidDirectionsAreRefused::test_buy_rejects_functional_currency_as_from_currency` | `reason`, field and currency codes of a BUY that delivers AFN |
+| `…::test_sell_rejects_functional_currency_as_from_currency` | the shape that used to post: SELL delivering AFN |
+| `…::test_exchange_rejects_same_currency[BUY] / [SELL]` | one currency on both sides, in both types, `from_currency_id == to_currency_id` |
+| `…::test_a_foreign_to_foreign_same_pair_is_not_the_functional_shortcut` | the refusal is about the pair, not about which currency is base (EUR→EUR refused; EUR→USD allowed) |
+| `TestAnInvalidDirectionNeverReachesTheLedger::test_invalid_exchange_direction_with_valid_quote_never_posts` | the quote is asserted to be in force and the drawer funded, then: no entry, no line, no audit row, no position change, Σdebit = Σcredit |
+| `…::test_a_rejected_direction_does_not_finalize_the_idempotency_key` | no `idempotency_keys` row exists at all (neither completed nor in progress), and the corrected request with the *same* key posts exactly one entry |
+| `…::test_a_refused_direction_leaves_the_branch_positions_untouched` | AFN and EUR drawer quantities unchanged after a refused SELL |
+| `…::test_an_unknown_transaction_type_is_still_refused_first` | direction validation did not displace the existing type/amount rules |
+| `TestValidExchangesStillPost::test_valid_foreign_to_functional_exchange_still_posts` | the legitimate SELL: 100 USD at 71 → `Cr Cash USD 7,000`, `Dr Cash AFN 7,100`, `foreign_amount` 100, position 900 |
+| `…::test_valid_buy_of_foreign_currency_still_posts` | the legitimate BUY: USD position 1,000 → 1,100, AFN drawer 10,000,000 → 9,993,000 |
+| `…::test_valid_foreign_to_foreign_exchange_still_posts` | EUR→USD: 400 EUR and 1,150 USD left, and the realized FX gain is credited to 4000 |
+| `TestTheAuditedTestThatPassedForTheWrongReason::test_an_unquoted_received_currency_is_still_refused_with_rate_not_found` | the *rate* boundary still fires — with a valid direction — and leaves the state unchanged |
+
+**Why the previous tests did not catch it.** The exchange suite tested the arithmetic of
+*valid* directions (the §6.2/§6.3 worked examples, the three-currency entry, the FX result)
+and the refusals of *values* (zero, negative, unbalanced, unquoted). Nothing asked what
+happens when the currency pair itself is impossible. One test came close and was passing for
+the wrong reason: `test_a_currency_without_a_quote_cannot_be_valued` posted its probe as a
+`BUY` with `from_currency_id = base`, so `RATE_NOT_FOUND` fired on the way and the test never
+reached the boundary it was written for. It has been rewritten to sell a funded USD drawer
+into an unquoted currency, which is the case it meant to prove.
+
+**Financial invariant protected.** No invalid financial state may be committed: an entry that
+cannot describe a real deal must not exist, Σdebit = Σcredit is preserved (it was never the
+problem — the entry *balanced*), posted history stays reproducible, and a refused request
+leaves no journal entry, no line, no position change, no audit row and no finalized key.
+
+### 40.2 Hole B — the generic journal door bypassed the inventory-position guard
+
+**Vulnerability.** `create_journal_entry` — the generic door, and the path later phases are
+expected to use for corrections — validated accounts, currencies, postability, branch
+boundaries and the balance proof, but never the **physical positions** its lines moved. A
+manual entry crediting an inventory account therefore drove the account negative. Measured
+before the fix, in the probe recorded below: a credit of 500 USD against an account holding
+nothing left the position at **`-7.1428571429`** units, stored, balanced and immutable, with a
+`JOURNAL_POSTED` audit row.
+
+**Root cause.** Two things had to be true at once. (1) The disposal guard lived in
+`_carrying_rate`, which only the *exchange* path calls, and it was expressed as a rate
+(functional value per unit held) rather than as a quantity — a manual entry states its own
+rate, so it never reached that code. (2) The generic door locked its accounts inside
+`_check_ledger_context`, *after* the first position read a guard would need, so adding a guard
+alone would have been racy: two manual deliveries could both read the pre-transaction position
+and both post. Nothing in the database backstopped either: `ct_journal_lines_balanced_*` only
+checks Σdebit = Σcredit, and `ct_cash_movements_non_negative` (`NEX01`) guards the
+`cash_movements` table, which no manual journal writes.
+
+**Fix (the reviewer's first option: the same guard and the same locking semantics).** The
+generic door sets `guard_inventory` on its posting plan and `_post` runs
+`_assert_inventory_positions` after the shared context validation and before the first insert:
+
+* every **inventory** account — the model's definition (§2: an asset account bound to a
+  currency) — sums its lines' contributions as `(debit - credit) / rate`, exactly the
+  expression PostgreSQL uses to generate `journal_lines.foreign_amount`;
+* a negative outcome is refused with the vocabulary the exchange door already uses:
+  `NO_POSITION` when the drawer is empty, `QUANTITY_EXCEEDED` with the shortfall and the
+  branch id when it is not (`409 INSUFFICIENT_BALANCE`);
+* the position is read **under the production lock** (`LedgerRepository.lock_accounts`,
+  ordered by account id — the order the lines are inserted in), taken at the start of the
+  transaction, so the read-then-write decision cannot be raced;
+* the guard is scoped to inventory accounts only: a currency-less control account has no
+  position to run out of, and a currency-bound **liability** drawn into debit is a
+  receivable, not a missing banknote.
+
+**Scope decision.** Document paths keep their own rules, because their physical side is
+written by the phase that owns the document and `NEX01` is the authority there: a BUY pays
+out of a drawer whose `cash_movements` row is written in the same transaction, and a reversal
+mirrors an entry that already exists. What the generic door may no longer do is move a
+position that no document vouches for — which is exactly the hole. The model records both the
+rule and the scope (`ACCOUNTING_MODEL.md` §13.7).
+
+**Exact regression tests** — `tests/integration/test_accounting_generic_journal_guard.py`
+(11 tests), all on real PostgreSQL with real row locks:
+
+| Test | What it proves |
+| --- | --- |
+| `test_generic_journal_rejects_cash_disposal_from_empty_position` | `NO_POSITION`, `foreign_quantity` 0, `disposing_quantity` 10, branch id in the details, state unchanged |
+| `test_generic_journal_rejects_cash_disposal_above_position` | `QUANTITY_EXCEEDED` with `shortfall` (`1,100` out of `1,000`), position unchanged |
+| `test_generic_journal_allows_exact_cash_disposal` | the exact position posts, the stored `foreign_amount` is the delivered quantity, the drawer ends at **0** — and the *next* delivery is refused at zero |
+| `test_generic_journal_cannot_create_negative_inventory` | the guard is per plan, not per line: two 600-unit lines against 1,000 units are refused as one 1,200-unit delivery |
+| `test_generic_journal_normal_accounts_remain_allowed` | currency-less controls, a per-currency liability drawn into debit and a *debit* into a drawer all still post |
+| `test_generic_journal_multicurrency_position_guard` | a full USD drawer does not cover EUR: the EUR leg is refused (`account_id`, `shortfall` 100) with **neither** currency moved; the same entry inside both positions posts and moves both |
+| `test_generic_journal_rejection_rolls_back_all_financial_state` | entries, lines, audit rows, idempotency rows, ledger totals, positions and the balance cache all identical before and after |
+| `test_generic_journal_position_guard_is_branch_scoped` | a group-wide drawer funded in one branch cannot be delivered from another branch (the extra branch is deactivated before the test ends so it cannot disturb later login fixtures) |
+| `test_rejected_generic_journal_does_not_finalize_idempotency` | no key row survives the refusal; the corrected request with the same key posts and the row is completed against the new entry |
+| `test_concurrent_generic_cash_disposals_cannot_make_position_negative` | two callers empty one 1,000-unit drawer: exactly one posts, the loser gets `INSUFFICIENT_BALANCE`, the drawer ends at 0 and never below |
+| `test_concurrent_partial_disposals_never_oversell_the_drawer` | 600 + 600 against 1,000 units: one posts, the loser reports `shortfall` 200, the drawer ends at 400 |
+
+**Financial invariants protected (all re-read from the database in the tests above).**
+Invariant I-5 — no inventory position may go negative — now holds for *every* path that writes
+the ledger, not only for a physical cash row. Entry and line counts, ledger totals, per-branch
+per-currency positions, the balance cache, the audit log and the idempotency state are all
+asserted unchanged after a refusal, and the ledger stays balanced
+(Σdebit = Σcredit) in the accepted cases.
+
+### 40.3 Re-verification of the whole phase after the fixes
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Full suite, run 1 | `python -m pytest tests -q` | **1173 passed**, 0 failed, 0 skipped, 180.64 s, `EXIT=0` |
+| Full suite, run 2 (independent) | `python -m pytest tests -q` | **1173 passed**, 0 failed, 0 skipped, 172.22 s, `EXIT=0` |
+| Full suite, run 3 (the exact committed tree) | `python -m pytest tests -q` | **1173 passed**, 0 failed, 0 skipped, 167.69 s, `EXIT=0` — re-run after the final formatting pass and the documentation edits, so the tree that is pushed is the tree that was tested |
+| Accounting suites | `python -m pytest tests -m accounting -q` | 210 passed |
+| The two new boundary suites | `… test_accounting_exchange_direction.py -q` / `… test_accounting_generic_journal_guard.py -q` | 13 passed / 11 passed |
+| Ruff | `python -m ruff check .` | clean |
+| Formatting | `python -m ruff format --check .` | 137 files already formatted |
+| Types | `python -m mypy app seeds scripts` | Success: no issues found in 89 source files |
+| Fresh database | drop/create + `alembic upgrade head` | `0002_runtime_schema_revision (head)` |
+| ORM ↔ database | `python -m scripts.schema_gate orm-db` | MATCH — 31 tables / 341 columns |
+| Reference ↔ migrated | `python -m scripts.schema_gate db-db` | MATCH — 31 tables / 72 indexes / 71 checks / 48 triggers / 23 routines / 5 views |
+| Reference checksum | `sha256sum docs/database/schema.sql` | unchanged against `CHECKSUMS.txt` |
+| Phase 0 invariants | `phase0_schema_invariants.sql` on a fresh migrated database | ALL ASSERTIONS PASSED (53 PASS lines) |
+| Seeds | `python -m seeds` → `python -m seeds` → `python -m seeds --check` | inserted=89 → unchanged=88 → unchanged=88 |
+| CI | push + pull-request runs of the fix commit | all six jobs success (recorded in `docs/PROJECT_STATUS.md` §3) |
+
+**Test-count arithmetic.** The reviewed tree carried 1148 tests. This round adds 24
+(`test_accounting_exchange_direction.py` 13 + `test_accounting_generic_journal_guard.py` 11)
+and one parametrised case, because `tests/unit/test_exceptions.py` parametrises over
+`ErrorCode` and the new `EXCHANGE_DIRECTION_INVALID` code is one more member — 1148 + 24 + 1 =
+**1173**. No test was deleted, disabled, skipped or marked `xfail`, and no assertion was
+loosened.
+
+**Existing tests audited and repaired (not deleted).** Three pre-existing tests were touched,
+each for a reason the reviewer's brief anticipated:
+
+| Test | Why it changed |
+| --- | --- |
+| `TestFunctionalCurrencyConversion::test_three_currencies_in_one_entry_balance_in_functional_units` | it posted a three-currency manual entry that paid 10,000 AFN out of an **empty** drawer — a state hole B says must be impossible. It now opens the till with exactly those 10,000 (the guard allows an exact delivery) and keeps every assertion it had about the stored lines and the balance |
+| `TestRateProvenanceAndHistory::test_a_currency_without_a_quote_cannot_be_valued` | was passing for the wrong reason (its BUY delivered the functional currency, so `RATE_NOT_FOUND` fired before the direction was ever considered). Rewritten to reach the rate boundary with a valid direction: a funded SELL of USD receiving an unquoted currency |
+| `TestTheGenericDoorRefusesToDeliverWhatItDoesNotHold` fixture code | the branch-scope test creates a second branch and deactivates it again, because a second active branch makes device registration ambiguous for every later login fixture (a Phase 3 lesson re-applied) |
+
+**Concurrency, re-verified with production locking.** The two race tests in §40.2 use
+`run_race` — separate engines, separate transactions, one event loop — and depend on real
+PostgreSQL row locks: `LedgerRepository.lock_accounts` orders by account id (`ORDER BY
+accounts.id`), the generic door takes that lock for every account it will touch *before* the
+guard reads a position, and the lines are inserted in the same order, so two deliveries queue
+instead of deadlocking and the loser reads the winner's committed position. Both tests assert
+the loser's domain error, the exact shortfall and the final quantity (0 and 400), never a
+mocked lock and never a fabricated outcome.
+
+**What did not change.** No migration and no schema change (head revision and the reference
+DDL checksum are identical to the reviewed tree, and both gates still MATCH); no constraint
+was weakened, removed or disabled; no test was deleted or silenced; no Phase 5 code, route,
+migration or test exists.
+
+## 41. Statement
 
 Phase 4 is **READY FOR REVIEW**. It is *not* approved: only the human reviewer moves a
 phase to APPROVED, and that decision is recorded in `docs/PROJECT_STATUS.md`.
+
+The first submission (`da0c9ff`) was reviewed independently; the two boundary holes the
+review found are fixed and pinned by §40, and the phase was re-verified end to end afterwards
+(1173 tests, 0 failed, 0 skipped, twice independently; every schema, invariant and seed gate
+re-run).
 
 Phase 5 (exchange routes: buy/sell documents, receipts, cancel and reverse) has **not been
 started**, no Phase 5 code, route, migration or test exists, and nothing in this phase

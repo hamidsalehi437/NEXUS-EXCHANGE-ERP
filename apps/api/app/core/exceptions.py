@@ -60,6 +60,13 @@ class ErrorCode(StrEnum):
     CASH_SESSION_NOT_OPEN = "CASH_SESSION_NOT_OPEN"
     CASH_SESSION_ALREADY_OPEN = "CASH_SESSION_ALREADY_OPEN"
     RATE_NOT_FOUND = "RATE_NOT_FOUND"
+    # Additive v1 code (Phase 4): an exchange whose currencies cannot describe a deal —
+    # delivering the functional currency, or naming one currency twice. Kept apart from
+    # VALIDATION_ERROR so a caller can tell "this document's direction is impossible" from
+    # "this field is malformed", and apart from INSUFFICIENT_BALANCE so a missing position
+    # is never mistaken for an impossible direction (the two were confusable before the
+    # Gate Review regression).
+    EXCHANGE_DIRECTION_INVALID = "EXCHANGE_DIRECTION_INVALID"
     RATE_OUT_OF_TOLERANCE = "RATE_OUT_OF_TOLERANCE"
     CURRENCY_INACTIVE = "CURRENCY_INACTIVE"
     BRANCH_INACTIVE = "BRANCH_INACTIVE"
@@ -301,6 +308,22 @@ class AlreadyReversedError(NexusError):
     code = ErrorCode.ALREADY_REVERSED
     http_status = 409
     default_message = "This document has already been reversed or cancelled."
+
+
+class ExchangeDirectionError(NexusError):
+    """The currencies of an exchange document cannot express a deal.
+
+    ``ACCOUNTING_MODEL.md`` §6.2/§6.3 define both exchange types with the **delivered**
+    currency foreign: a BUY acquires foreign currency and pays the functional one, a SELL
+    delivers foreign currency and receives the functional one. So the functional currency
+    can never be the delivered side, and a deal cannot name the same currency on both
+    sides. Neither case is a missing rate or an empty drawer, and saying so is the point of
+    giving them their own code.
+    """
+
+    code = ErrorCode.EXCHANGE_DIRECTION_INVALID
+    http_status = 422
+    default_message = "The currencies of this exchange do not describe a valid deal."
 
 
 class ImmutableFieldError(NexusError):

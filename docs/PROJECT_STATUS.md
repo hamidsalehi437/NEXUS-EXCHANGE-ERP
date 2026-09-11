@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.4 |
+| Version | 1.5 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -80,6 +80,25 @@ Notes:
   `completed`/**`success`** with all six jobs green and every step of *Integration tests and
   schema gates* green (`pytest (integration)`, migration on a clean database, both schema gates,
   seed idempotency — `inserted=89` then `unchanged=88` twice — and the Phase 0 invariant suite).
+* **Gate Review round.** The independent review of `da0c9ff` found two financial boundary holes:
+  an invalid exchange *direction* could reach financial posting (a SELL delivering the functional
+  currency posted a balanced entry for a deal that cannot exist), and the generic
+  `create_journal_entry` door bypassed the inventory-position guard (a manual credit drove an
+  inventory account to `-7.1428571429` units). Both are fixed — new `EXCHANGE_DIRECTION_INVALID`
+  (422) refusal with `SAME_CURRENCY` / `FUNCTIONAL_CURRENCY_NOT_DELIVERABLE`, and
+  `_assert_inventory_positions` run by the generic door under the production account lock — and
+  pinned by two new suites (13 + 11 tests) plus three repaired pre-existing tests. Test count
+  **1148 → 1173** (24 new tests + one parametrised case for the new error code); the fix commit's
+  hash and its CI runs are pinned by the finalisation commit at the top of the branch.
+* Gate Review re-verification: `pytest tests -q` → **1173 passed** (0 failed, 0 skipped) in
+  180.64 s and again in 172.22 s (two independent runs); `pytest -m accounting -q` → 210 passed;
+  `ruff check .` clean, `ruff format --check .` 137 files, `mypy app seeds scripts` 89 files;
+  fresh-database migration to head, ORM/schema gate MATCH (31 tables / 341 columns),
+  reference/schema gate MATCH (72 indexes / 71 checks / 48 triggers / 23 routines / 5 views),
+  reference DDL checksum unchanged; Phase 0 invariant suite ALL ASSERTIONS PASSED (53 PASS lines);
+  seeds idempotent (89 / 88 / 88). No migration, no schema change, no constraint weakened, no
+  test deleted, disabled or marked `xfail`. Phase 4 remains **READY FOR REVIEW** and Phase 5–17
+  remain **NOT STARTED**.
 * Phase 4 verification on the implementation commit: `pytest tests -q` → **1148 passed**
   (0 failed, 0 skipped) in 165.04 s and again in 172.38 s on the committed tree; `ruff check .` → clean, `ruff format --check .` → 135 files
   already formatted; `mypy app seeds scripts` → no issues in 89 source files; fresh-database
@@ -129,5 +148,6 @@ Each phase must, before it is declared complete:
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
 | 1.1 | 2026-09-12 | Phase 2 marked **APPROVED**; Phase 3 marked **READY FOR REVIEW** with `docs/phases/PHASE3_REPORT.md`; Phase 3 commit chain and the "no migration needed" note added; Phase 4–17 remain NOT STARTED |
 | 1.2 | 2026-09-12 | Phase 3 finalisation: the implementation commit pinned as `db85e21` with its exact diff stat and the full verification results (905 passed / ruff / mypy / migration / gates / Phase 0 invariants / seeds); the Phase 3 CI runs `34645985626` and `34645990882` recorded in the environment table. Phase 3 stays **READY FOR REVIEW** (not approved) and Phase 4–17 stay **NOT STARTED** |
+| 1.5 | 2026-09-12 | Phase 4 **Gate Review round**: the two financial boundary holes found by the independent review of `da0c9ff` fixed (exchange direction, generic-journal inventory guard), two dedicated regression suites added (24 tests), three pre-existing tests repaired, the whole phase re-verified (1173 passed twice independently; every schema, invariant and seed gate re-run). Phase 4 stays **READY FOR REVIEW** and Phase 5–17 stay **NOT STARTED** |
 | 1.4 | 2026-09-12 | Phase 4 finalisation: the implementation commit pinned as **`da0c9ff`** with its exact diff stat (33 files, +12 033/−61) and its two green CI runs (`34656339711` push, `34656343155` pull request) recorded in the environment table. Phase 4 stays **READY FOR REVIEW** (not approved) and Phase 5–17 stay **NOT STARTED** |
 | 1.3 | 2026-09-12 | Phase 3 marked **APPROVED**; Phase 4 marked **READY FOR REVIEW** with `docs/phases/PHASE4_REPORT.md`; Phase 4 commit chain, exact diff stat, full verification results (1148 passed / ruff / mypy / migration / both schema gates / Phase 0 invariants / seeds) and the no-migration + rate-snapshot decision recorded. Phase 4 stays **READY FOR REVIEW** (not approved) and Phase 5–17 stay **NOT STARTED** |

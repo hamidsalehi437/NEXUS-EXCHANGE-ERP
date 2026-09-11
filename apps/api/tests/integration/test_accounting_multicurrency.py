@@ -190,8 +190,28 @@ class TestFunctionalCurrencyConversion:
     def test_three_currencies_in_one_entry_balance_in_functional_units(
         self, api_client: TestClient, admin_headers: dict[str, str], main_database: str
     ) -> None:
-        """One entry, three currencies: the proof is still Σdebit = Σcredit."""
+        """One entry, three currencies: the proof is still Σdebit = Σcredit.
+
+        The afghanis the entry pays out must exist: the till is opened with exactly the
+        10,000 the entry delivers, which is the generic journal door's inventory guard
+        (Gate Review hole B) doing its job - before that guard existed, this entry was
+        posted against an empty drawer and the AFN position went to -10,000.
+        """
         world = build_world(api_client, admin_headers, main_database, quotes=True)
+        run_scenario(
+            main_database,
+            lambda service: service.post_cash_movement(
+                movement_type="OPENING",
+                reference_id=uuid.uuid4(),
+                branch_id=world.branch_id,
+                cash_account_id=world.account("cash_afn"),
+                counter_account_id=world.account("capital"),
+                currency_id=world.base.id,
+                amount=Decimal("10000"),
+                exchange_rate=Decimal("1"),
+                actor=world.head_actor,
+            ),
+        )
         publish_rate(
             api_client,
             admin_headers,
@@ -817,11 +837,33 @@ class TestRateProvenanceAndHistory:
     def test_a_currency_without_a_quote_cannot_be_valued(
         self, api_client: TestClient, admin_headers: dict[str, str], main_database: str
     ) -> None:
-        """BUYing a foreign currency needs the house's quote for it: refused without one."""
+        """Receiving a foreign currency needs the house's quote for it: refused without one.
+
+        The **direction** matters here. This test used to hand the service
+        ``from_currency_id=base`` and passed because ``RATE_NOT_FOUND`` fired first - a
+        missing quote for a deal that could not exist in the first place. Gate Review hole A
+        gave the direction its own refusal, and the test now reaches the boundary it meant to
+        test: a legitimate SELL of USD, funded to cover the delivery, whose *received*
+        currency has no quote in force.
+        """
         from tests.accounting_helpers import create_account, create_currency
         from tests.masterdata_helpers import unique_currency_code
 
         world = build_world(api_client, admin_headers, main_database)
+        run_scenario(
+            main_database,
+            lambda service: service.post_cash_movement(
+                movement_type="OPENING",
+                reference_id=uuid.uuid4(),
+                branch_id=world.branch_id,
+                cash_account_id=world.account("cash_usd"),
+                counter_account_id=world.account("capital"),
+                currency_id=world.money("USD").id,
+                amount=Decimal("1000"),
+                exchange_rate=Decimal("70"),
+                actor=world.head_actor,
+            ),
+        )
         exotic = create_currency(api_client, admin_headers, code=unique_currency_code())
         exotic_id = uuid.UUID(exotic["id"])
         exotic_cash = uuid.UUID(
@@ -838,14 +880,14 @@ class TestRateProvenanceAndHistory:
         async def scenario(service):
             with pytest.raises(RateNotFoundError) as refusal:
                 await service.post_exchange(
-                    transaction_type="BUY",
+                    transaction_type="SELL",
                     reference_id=uuid.uuid4(),
                     branch_id=world.branch_id,
-                    from_currency_id=world.base.id,
+                    from_currency_id=world.money("USD").id,
                     to_currency_id=exotic_id,
-                    from_amount=Decimal("1000"),
-                    exchange_rate=Decimal("2"),
-                    from_cash_account_id=world.account("cash_afn"),
+                    from_amount=Decimal("100"),
+                    exchange_rate=Decimal("70"),
+                    from_cash_account_id=world.account("cash_usd"),
                     to_cash_account_id=exotic_cash,
                     fx_account_id=world.account("fx"),
                     commission=Decimal("0"),

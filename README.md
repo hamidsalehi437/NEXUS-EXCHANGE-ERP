@@ -6,9 +6,9 @@ An offline-first, multi-currency, multi-branch ERP and point-of-sale system for 
 > فاز ۰: مستندات معماری، ERD، اسکیمای اجرایی، قرارداد API، طراحی همگام‌سازی، معماری امنیت، مدل حسابداری و نقشه راه.
 > فاز ۲: احراز هویت (OAuth2/JWT با چرخش refresh)، Argon2id، RBAC با شش نقش، مدیریت دستگاه و نشست، محدودیت نرخ، لاگ حسابرسی زنجیره‌ای.
 > فاز ۳: ارزها، شعبه‌ها، مشتریان (کد خودکار)، نمودار حساب‌ها و نرخ‌های ارز (append-only و audit‌شده) با سرویس و endpointهای تعیین نرخ. گزارش کامل: [`docs/phases/PHASE3_REPORT.md`](docs/phases/PHASE3_REPORT.md).
-> فاز ۴: موتور حسابداری — دفتر دوبل با `SUM(debit) = SUM(credit)` در سطح پایگاه‌داده، ثبت تغییرناپذیر، اصلاح با برگشت (reversal) و نه ویرایش، حسابداری چندارزی با نرخ نگه‌داشته‌شده در خط، ایدمپوتنسی ثبت و گزارش تراز آزمایشی. گزارش کامل: [`docs/phases/PHASE4_REPORT.md`](docs/phases/PHASE4_REPORT.md). فاز ۵ شروع نشده است.
+> فاز ۴: موتور حسابداری — دفتر دوبل با `SUM(debit) = SUM(credit)` در سطح پایگاه‌داده، ثبت تغییرناپذیر، اصلاح با برگشت (reversal) و نه ویرایش، حسابداری چندارزی با نرخ نگه‌داشته‌شده در خط، ایدمپوتنسی ثبت و گزارش تراز آزمایشی. بازبینی مستقل دو حفرهٔ مرزی را یافت که هر دو بسته شد: جهت نامعتبر معاوضه و دور زدن محافظ موجودی از راه ثبت دستی. ۱۱۷۳ آزمون موفق. گزارش کامل: [`docs/phases/PHASE4_REPORT.md`](docs/phases/PHASE4_REPORT.md). فاز ۵ شروع نشده است.
 >
-> **Current status — Phases 0, 1, 2 and 3 are APPROVED; Phase 4 (the double-entry accounting engine) is READY FOR REVIEW.** Phase 3 delivered the master data every later phase depends on. Phase 4 delivers the ledger those phases will post into: `AccountingService` as the only writer of journal entries, balance enforced in the database at COMMIT, immutable posted journals corrected by reversal, multi-currency posting that carries the rate it used, idempotent posting, branch and RBAC scoping, and the journal/trial-balance read models — with no schema change and no new migration, because the approved Phase 0 schema already covered the ledger. **1148 tests pass.** Phase 5 has **not** started. Full report: [`docs/phases/PHASE4_REPORT.md`](docs/phases/PHASE4_REPORT.md).
+> **Current status — Phases 0, 1, 2 and 3 are APPROVED; Phase 4 (the double-entry accounting engine) is READY FOR REVIEW.** Phase 3 delivered the master data every later phase depends on. Phase 4 delivers the ledger those phases will post into: `AccountingService` as the only writer of journal entries, balance enforced in the database at COMMIT, immutable posted journals corrected by reversal, multi-currency posting that carries the rate it used, idempotent posting, branch and RBAC scoping, and the journal/trial-balance read models — with no schema change and no new migration, because the approved Phase 0 schema already covered the ledger. An independent Gate Review of the first submission found and closed two boundary holes (an invalid exchange *direction* that could reach posting, and the generic journal door bypassing the inventory-position guard), each pinned by its own regression suite. **1173 tests pass.** Phase 5 has **not** started. Full report: [`docs/phases/PHASE4_REPORT.md`](docs/phases/PHASE4_REPORT.md).
 
 ## The five non-negotiables
 
@@ -81,10 +81,10 @@ Full runbook, native (no-Docker) path, TLS, hardening checklist and troubleshoot
 
 ```bash
 cd apps/api
-# 1148 tests today: 501 unit (no database) + 647 integration (real PostgreSQL).
+# 1173 tests today: 502 unit (no database) + 671 integration (real PostgreSQL).
 PYTHONPATH=. python -m pytest tests/unit -q          # unit tests, no database needed
 PYTHONPATH=. python -m pytest tests/integration -q   # real PostgreSQL: migration, schema gates, seeds, invariants, worker, ledger
-PYTHONPATH=. python -m pytest -m accounting -q       # the Phase 4 double-entry suites (186 tests)
+PYTHONPATH=. python -m pytest -m accounting -q       # the Phase 4 double-entry suites (210 tests)
 python -m ruff check . && python -m mypy app seeds scripts
 
 # The database half needs PostgreSQL 16 (see docs/DEPLOYMENT.md §4):
