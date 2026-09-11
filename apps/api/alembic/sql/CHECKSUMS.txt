@@ -1,0 +1,13 @@
+# NEXUS EXCHANGE ERP — checksums of the approved database schema files
+#
+# The initial migration applies these files verbatim. The migration refuses to run when
+# a checksum does not match, so the database can never be built from a file that differs
+# from what was reviewed and approved in Phase 0 (PART 12, PART 22, PART 50).
+#
+# Verify manually:
+#   sha256sum -c apps/api/alembic/sql/CHECKSUMS.txt
+#
+# Format: <sha256>  <path relative to apps/api/>
+
+37f7bc3cfc523589f934494b910a49db67a4d66cfd1b34b843cf3819102ae455  ../../docs/database/schema.sql
+37f7bc3cfc523589f934494b910a49db67a4d66cfd1b34b843cf3819102ae455  alembic/sql/0001_initial_schema.sql

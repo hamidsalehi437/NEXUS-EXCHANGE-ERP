@@ -1,0 +1,241 @@
+"""Domain exceptions and the SQLSTATE → error-code mapping.
+
+The API contract (``docs/api/API_CONTRACT.md`` §3-§5) promises every failure is
+reported as ``{"error": {"code", "message", "details"}}`` with a specific HTTP
+status. This module is the single place where that promise is defined:
+
+* :class:`ErrorCode` enumerates the contract's stable machine-readable codes.
+* :class:`NexusError` and its subclasses carry the code, status and details.
+* :func:`error_for_sqlstate` translates the database's custom SQLSTATEs
+  (``docs/database/SCHEMA.md`` §4.1) into the same vocabulary, so a constraint
+  violation raised inside PostgreSQL surfaces as a meaningful API error instead
+  of an opaque 500.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import Any
+
+
+class ErrorCode(StrEnum):
+    """Stable error codes from the API contract."""
+
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+    TOKEN_EXPIRED = "TOKEN_EXPIRED"  # noqa: S105 - an error code, not a credential
+    TOKEN_INVALID = "TOKEN_INVALID"  # noqa: S105 - an error code, not a credential
+    TOKEN_REVOKED = "TOKEN_REVOKED"  # noqa: S105 - an error code, not a credential
+    DEVICE_REVOKED = "DEVICE_REVOKED"
+    DEVICE_UNKNOWN = "DEVICE_UNKNOWN"
+    DEVICE_MISMATCH = "DEVICE_MISMATCH"
+    ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
+    PERMISSION_DENIED = "PERMISSION_DENIED"
+    FORBIDDEN_SCOPE = "FORBIDDEN_SCOPE"
+    RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+    DUPLICATE_RESOURCE = "DUPLICATE_RESOURCE"
+    IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
+    IDEMPOTENCY_IN_PROGRESS = "IDEMPOTENCY_IN_PROGRESS"
+    IDEMPOTENCY_KEY_REQUIRED = "IDEMPOTENCY_KEY_REQUIRED"
+    INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
+    JOURNAL_UNBALANCED = "JOURNAL_UNBALANCED"
+    INVALID_STATUS_TRANSITION = "INVALID_STATUS_TRANSITION"
+    ALREADY_REVERSED = "ALREADY_REVERSED"
+    REVERSAL_INVALID = "REVERSAL_INVALID"
+    IMMUTABLE_FIELD = "IMMUTABLE_FIELD"
+    APPEND_ONLY_VIOLATION = "APPEND_ONLY_VIOLATION"
+    CASH_RECON_INCOMPLETE = "CASH_RECON_INCOMPLETE"
+    CASH_COUNTER_ACCOUNT_REQUIRED = "CASH_COUNTER_ACCOUNT_REQUIRED"
+    CASH_SESSION_NOT_OPEN = "CASH_SESSION_NOT_OPEN"
+    CASH_SESSION_ALREADY_OPEN = "CASH_SESSION_ALREADY_OPEN"
+    RATE_NOT_FOUND = "RATE_NOT_FOUND"
+    RATE_OUT_OF_TOLERANCE = "RATE_OUT_OF_TOLERANCE"
+    CURRENCY_INACTIVE = "CURRENCY_INACTIVE"
+    BRANCH_INACTIVE = "BRANCH_INACTIVE"
+    CUSTOMER_INACTIVE = "CUSTOMER_INACTIVE"
+    TRANSFER_STATE_INVALID = "TRANSFER_STATE_INVALID"
+    TRANSFER_ALREADY_PAID = "TRANSFER_ALREADY_PAID"
+    ALLOCATION_EXCEEDED = "ALLOCATION_EXCEEDED"
+    ALLOCATION_EXPIRED = "ALLOCATION_EXPIRED"
+    NUMBER_BLOCK_EXHAUSTED = "NUMBER_BLOCK_EXHAUSTED"
+    BUSINESS_DATE_SKEW = "BUSINESS_DATE_SKEW"
+    CURSOR_EXPIRED = "CURSOR_EXPIRED"
+    SYNC_EVENT_REJECTED = "SYNC_EVENT_REJECTED"
+    RATE_LIMITED = "RATE_LIMITED"
+    SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    DATA_INTEGRITY_ERROR = "DATA_INTEGRITY_ERROR"
+
+
+class NexusError(Exception):
+    """Base class for every expected (non-defect) application error."""
+
+    code: ErrorCode = ErrorCode.INTERNAL_ERROR
+    http_status: int = 500
+    default_message: str = "An unexpected error occurred."
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        details: dict[str, Any] | None = None,
+        code: ErrorCode | None = None,
+        http_status: int | None = None,
+    ) -> None:
+        self.message = message or self.default_message
+        self.details: dict[str, Any] = details or {}
+        if code is not None:
+            self.code = code
+        if http_status is not None:
+            self.http_status = http_status
+        super().__init__(self.message)
+
+    def to_payload(self, request_id: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "error": {
+                "code": str(self.code),
+                "message": self.message,
+                "details": self.details,
+            }
+        }
+        if request_id:
+            payload["request_id"] = request_id
+        return payload
+
+
+# --- Validation and input ----------------------------------------------------
+class ValidationError(NexusError):
+    code = ErrorCode.VALIDATION_ERROR
+    http_status = 422
+    default_message = "The request could not be validated."
+
+
+class ResourceNotFoundError(NexusError):
+    code = ErrorCode.RESOURCE_NOT_FOUND
+    http_status = 404
+    default_message = "The requested resource does not exist."
+
+
+class DuplicateResourceError(NexusError):
+    code = ErrorCode.DUPLICATE_RESOURCE
+    http_status = 409
+    default_message = "The resource already exists."
+
+
+class DataIntegrityError(NexusError):
+    code = ErrorCode.DATA_INTEGRITY_ERROR
+    http_status = 422
+    default_message = "The request violates a data integrity rule."
+
+
+# --- Authentication and authorisation ---------------------------------------
+class AuthenticationError(NexusError):
+    code = ErrorCode.TOKEN_INVALID
+    http_status = 401
+    default_message = "Authentication is required."
+
+
+class PermissionDeniedError(NexusError):
+    code = ErrorCode.PERMISSION_DENIED
+    http_status = 403
+    default_message = "You do not have permission to perform this action."
+
+
+class ForbiddenScopeError(NexusError):
+    code = ErrorCode.FORBIDDEN_SCOPE
+    http_status = 403
+    default_message = "This resource belongs to another branch."
+
+
+# --- Financial invariants (mirrors the database SQLSTATEs) -------------------
+class InsufficientBalanceError(NexusError):
+    code = ErrorCode.INSUFFICIENT_BALANCE
+    http_status = 409
+    default_message = "Insufficient currency balance."
+
+
+class JournalUnbalancedError(NexusError):
+    """A defect in our own posting code; the database refused an unbalanced entry."""
+
+    code = ErrorCode.JOURNAL_UNBALANCED
+    http_status = 500
+    default_message = "The journal entry is not balanced."
+
+
+class InvalidStatusTransitionError(NexusError):
+    code = ErrorCode.INVALID_STATUS_TRANSITION
+    http_status = 409
+    default_message = "The requested status change is not allowed."
+
+
+class ReversalError(NexusError):
+    code = ErrorCode.REVERSAL_INVALID
+    http_status = 422
+    default_message = "The reversal request is not valid."
+
+
+class AlreadyReversedError(NexusError):
+    code = ErrorCode.ALREADY_REVERSED
+    http_status = 409
+    default_message = "This document has already been reversed or cancelled."
+
+
+class ImmutableFieldError(NexusError):
+    code = ErrorCode.IMMUTABLE_FIELD
+    http_status = 409
+    default_message = "Posted financial fields cannot be modified."
+
+
+class AppendOnlyViolationError(NexusError):
+    code = ErrorCode.APPEND_ONLY_VIOLATION
+    http_status = 403
+    default_message = "This record is append-only and cannot be modified or deleted."
+
+
+class CashReconciliationIncompleteError(NexusError):
+    code = ErrorCode.CASH_RECON_INCOMPLETE
+    http_status = 422
+    default_message = "A cash reconciliation needs both the expected and the counted amount."
+
+
+# --- Infrastructure ----------------------------------------------------------
+class ServiceUnavailableError(NexusError):
+    code = ErrorCode.SERVICE_UNAVAILABLE
+    http_status = 503
+    default_message = "A required service is temporarily unavailable."
+
+
+# SQLSTATE → domain error. Custom codes are defined in docs/database/SCHEMA.md §4.1.
+_SQLSTATE_MAP: dict[str, type[NexusError]] = {
+    "NEX01": InsufficientBalanceError,  # cash/currency position would go negative
+    "NEX02": JournalUnbalancedError,  # entry unbalanced, <2 lines, invalid line
+    "NEX03": InvalidStatusTransitionError,  # state machine violation
+    "NEX04": ReversalError,  # reversal target invalid / unbound
+    "NEX05": CashReconciliationIncompleteError,
+    "NEX06": ImmutableFieldError,  # posted field is frozen
+    "P0001": AppendOnlyViolationError,  # append-only trigger fired
+    "23505": DuplicateResourceError,  # unique_violation
+    "23503": DataIntegrityError,  # foreign_key_violation
+    "23514": DataIntegrityError,  # check_violation
+    "23P01": DuplicateResourceError,  # exclusion_violation
+    "40001": ServiceUnavailableError,  # serialization_failure (retryable)
+    "40P01": ServiceUnavailableError,  # deadlock_detected (retryable)
+}
+
+# SQLSTATEs that mean "the same insertion already happened" for offline replay.
+DUPLICATE_SQLSTATES = frozenset({"23505", "23P01"})
+
+
+def error_for_sqlstate(
+    sqlstate: str | None,
+    message: str | None = None,
+    *,
+    details: dict[str, Any] | None = None,
+) -> NexusError:
+    """Return the domain error matching a PostgreSQL SQLSTATE.
+
+    Unknown codes produce a :class:`DataIntegrityError` (422) rather than leaking a
+    raw database message to the client.
+    """
+    error_class = _SQLSTATE_MAP.get(sqlstate or "", DataIntegrityError)
+    return error_class(message, details=details)

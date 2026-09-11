@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | **Phase 0 delivered — pending approval** |
+| Status | **Phase 1 delivered — pending approval** |
 | Last updated | 2026-09-11 |
 | Rule | Each document has an ID, a version and an owner; documents change in the same PR as the behaviour they describe |
 
@@ -21,6 +21,7 @@
 | 9 | [`security/SECURITY.md`](security/SECURITY.md) | `SEC-ARCH-001` | Threat model, authn/z, encryption, hardening, regulatory boundary |
 | 10 | [`security/TEST_PLAN.md`](security/TEST_PLAN.md) | `SEC-TEST-001` | Test catalogue, security matrix, CI gates, Phase 0 evidence |
 | 11 | [`architecture/ROADMAP.md`](architecture/ROADMAP.md) | `ARCH-ROAD-001` | Phases 1–13 with exit criteria, risks, MVP mapping |
+| 12 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | `OPS-DEPLOY-001` | How to start, migrate, seed, verify and operate the five-service stack |
 
 Supporting artifacts:
 
@@ -28,13 +29,6 @@ Supporting artifacts:
 * `../docs/user-manual/` — operator manuals (authored in Phase 13).
 * `openapi.json` — exported by CI from the running application (Phase 1); never hand-edited.
 
-## Phase 0 status in one line
+## Phase status in one line
 
-Architecture, ERD, schema, API contract, folder structure, sync design, security architecture, accounting model and roadmap are delivered; the schema and its invariant suite were **executed** against PostgreSQL 16.2 (schema exit 0, 27/27 assertions pass, 31 tables / 5 views / 23 functions / 58 triggers / 413 constraints). No application code, migration or configuration was written — implementation starts only after approval (PART 50, PART 61).
-
-## Conventions used across these documents
-
-* **MUST / must** — a requirement enforced by code, database or CI. **Should** — a strong default that needs a written reason to bend.
-* Every claim about money is tied to a database object (`consultant` names are exact: `ct_journal_lines_balanced_*`, `ux_exchange_transactions_reversed_once`, …).
-* Deviations from the master prompt are numbered (`D-nn` in `SCHEMA.md`, `ADR-nn` in `ARCHITECTURE.md`) with rationale and trade-off.
-* Persian summaries appear at the top of each document; the normative text is English so that code, tests and documents use one vocabulary.
+Phase 1 adds the real `apps/api` foundation (FastAPI + Pydantic v2 + SQLAlchemy 2.x), the Alembic initial revision that applies the approved schema verbatim (checksum-verified), the five-service Docker Compose stack, the idempotent seed runner, health/readiness endpoints, the Celery worker, CI, and the unit/integration suites — 424 tests green, both schema gates matching, the Phase 0 invariant suite green on a freshly migrated database. No business endpoint is implemented yet; that is Phase 2.

@@ -92,6 +92,11 @@ desktop.ini
 *~
 *.swp
 
+# --- Generated build artifacts -----------------------------------------------
+# The OpenAPI document is exported from the application (scripts/gen_openapi.sh) and
+# uploaded by CI; it is never hand-edited and never committed.
+docs/api/openapi.json
+
 # --- CI artifacts ------------------------------------------------------------
 test-results/
 playwright-report/

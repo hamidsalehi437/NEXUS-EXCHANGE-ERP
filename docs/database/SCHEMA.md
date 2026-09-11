@@ -145,6 +145,8 @@ Legal/financial reporting always reads the ledger or the movement tables. The ca
 
 Deployments create login roles that inherit from these groups (see `docs/security/SECURITY.md` §8). The verified suite proves `nexus_app` is denied `DELETE`/`UPDATE` on ledgers even if application logic is bypassed (3/3 denials).
 
+`nexus_app` holds exactly one `DELETE` privilege: `idempotency_keys` (D-20). It is an operational table — no money, no audit trail, no business document — and PART 40's retention window (`IDEMPOTENCY_RETENTION_DAYS`, default 30 days) requires that records whose request can no longer be replayed are removed by the maintenance worker. Every other financial, document, master-data and audit table keeps the revocations above.
+
 ## 9. Documented deviations and additions
 
 "Deviations" are places where the Phase 0 schema is stricter than, or extends, the DDL in PARTS 6–19. Each is deliberate and each is reflected in code, tests and this document.
@@ -170,6 +172,7 @@ Deployments create login roles that inherit from these groups (see `docs/securit
 | D-17 | Zero-extension policy | Decision | Portability across managed PostgreSQL; verified on a build without contrib | Deployments could fail on `CREATE EXTENSION` |
 | D-18 | Status machines as triggers | Addition | PART 14/15 status sets are meaningless without transition rules | `REVERSED → COMPLETED` would be possible |
 | D-19 | Reversal link direction fixed (reversing row points at the original) + deferred I-4 trigger | Decision | Makes "reversed ⇒ reveral exists" checkable without circular constraints | Ambiguity that the Phase 0 suite caught as defect #2 |
+| D-20 | `GRANT DELETE ON idempotency_keys TO nexus_app` | Correction | The runtime role is least-privilege (`SELECT/INSERT/UPDATE` only), which left the retention worker unable to delete expired idempotency records — the scheduled task failed with `permission denied`, discovered while verifying the Phase 1 worker against a database owned by a non-superuser role | Idempotency records would grow without bound and the documented retention policy would be unenforceable; the alternative (running the worker as the schema owner) would hand DDL rights to a service process |
 
 **Not implemented on purpose (no placeholders):** FX revaluation of open positions, hard period locking and month-end closing (see `ACCOUNTING_MODEL.md` §11); KYC/AML modules (regulatory scope, `SECURITY.md` §10); payroll, inventory and tax modules (out of product scope).
 

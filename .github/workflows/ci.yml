@@ -1,0 +1,324 @@
+# =============================================================================
+# NEXUS EXCHANGE ERP — continuous integration (PART 48, PART 56, PART 58)
+# =============================================================================
+# Every gate that protects the financial invariants runs here:
+#
+#   lint        ruff check + ruff format --check
+#   typecheck   mypy (app, seeds, scripts)
+#   unit        unit tests, no database required
+#   integration PostgreSQL 16 + Redis 7 services → integration suite, migration on
+#               a clean database, both schema gates (ORM↔DB and DB↔DB), seed
+#               idempotency, and the Phase 0 invariant suite
+#   compose     the real stack: docker compose up -d --wait, migrate, seed, then
+#               readiness through nginx — the PART 44 acceptance criterion
+#   openapi     the OpenAPI document as a build artefact for the API client
+#
+# No job needs a secret: the suite creates disposable databases, and the only
+# credentials in this file belong to throwaway service containers that are
+# destroyed with the job.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # ------------------------------------------------------------------------ lint
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+      - name: Install development dependencies
+        run: pip install -r apps/api/requirements-dev.txt
+      - name: ruff check
+        working-directory: apps/api
+        run: python -m ruff check .
+      - name: ruff format --check
+        working-directory: apps/api
+        run: python -m ruff format --check .
+
+  # ------------------------------------------------------------------- typecheck
+  typecheck:
+    name: Type check (mypy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+      - name: Install development dependencies
+        run: pip install -r apps/api/requirements-dev.txt
+      - name: mypy
+        working-directory: apps/api
+        run: python -m mypy app seeds scripts
+
+  # ------------------------------------------------------------------------ unit
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+      - name: Install development dependencies
+        run: pip install -r apps/api/requirements-dev.txt
+      - name: pytest (unit)
+        working-directory: apps/api
+        env:
+          PYTHONPATH: .
+        run: python -m pytest tests/unit -q --junitxml=unit-results.xml
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: apps/api/unit-results.xml
+
+  # ----------------------------------------------------------------- integration
+  integration:
+    name: Integration tests and schema gates
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --data-checksums"
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      # The suite creates and drops its own databases (nexus_test_*), so it connects
+      # as a role that may do so. These values are not deployment credentials.
+      NEXUS_TEST_ADMIN_DSN: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      NEXUS_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+      - name: Install development dependencies
+        run: pip install -r apps/api/requirements-dev.txt
+
+      - name: pytest (integration)
+        working-directory: apps/api
+        env:
+          PYTHONPATH: .
+        run: python -m pytest tests/integration -q --junitxml=integration-results.xml
+
+      - name: Migration on a clean database
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/nexus_ci_clean
+          DATABASE_MIGRATION_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/nexus_ci_clean
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS nexus_ci_clean WITH (FORCE)" \
+            -c "CREATE DATABASE nexus_ci_clean"
+          alembic upgrade head
+          alembic current
+
+      - name: Schema gate — ORM metadata vs migrated database
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python -m scripts.schema_gate orm-db \
+            --dsn postgresql+psycopg://postgres:postgres@127.0.0.1:5432/nexus_ci_clean
+
+      - name: Schema gate — reference file vs migrated database
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS nexus_ci_reference WITH (FORCE)" \
+            -c "CREATE DATABASE nexus_ci_reference"
+          psql -h 127.0.0.1 -U postgres -d nexus_ci_reference -v ON_ERROR_STOP=1 \
+            -q -f ../docs/database/schema.sql
+          PYTHONPATH=. python -m scripts.schema_gate db-db \
+            --left postgresql+psycopg://postgres:postgres@127.0.0.1:5432/nexus_ci_reference \
+            --right postgresql+psycopg://postgres:postgres@127.0.0.1:5432/nexus_ci_clean
+
+      - name: Seed idempotency (first run / second run / --check)
+        working-directory: apps/api
+        env:
+          APP_ENV: development
+          DEV_ADMIN_PASSWORD: Ci-Only-Admin-Password-2026!
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/nexus_ci_clean
+          DATABASE_MIGRATION_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/nexus_ci_clean
+        run: |
+          set -euo pipefail
+          python -m seeds | tee /tmp/seed-first.log
+          python -m seeds | tee /tmp/seed-second.log
+          python -m seeds --check | tee /tmp/seed-check.log
+          grep -q "TOTAL: inserted=88 updated=0 unchanged=0 removed=0" /tmp/seed-first.log
+          grep -q "TOTAL: inserted=0 updated=0 unchanged=87 removed=0" /tmp/seed-second.log
+          grep -q "TOTAL: inserted=0 updated=0 unchanged=87 removed=0" /tmp/seed-check.log
+
+      - name: Phase 0 invariant suite on a fresh migrated database
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/nexus_ci_phase0
+          DATABASE_MIGRATION_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/nexus_ci_phase0
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS nexus_ci_phase0 WITH (FORCE)" \
+            -c "CREATE DATABASE nexus_ci_phase0"
+          alembic upgrade head
+          psql -h 127.0.0.1 -U postgres -d nexus_ci_phase0 -v ON_ERROR_STOP=1 \
+            -f ../tests/invariants/phase0_schema_invariants.sql 2>&1 | tee /tmp/phase0.log
+          grep -q "PHASE 0 SCHEMA INVARIANT SUITE: ALL ASSERTIONS PASSED" /tmp/phase0.log
+
+      - name: Upload integration test results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            apps/api/integration-results.xml
+            /tmp/phase0.log
+
+  # ------------------------------------------------------------------- compose
+  compose-stack:
+    name: Compose stack (PART 44 acceptance)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+      - name: Install development dependencies
+        run: pip install -r apps/api/requirements-dev.txt
+
+      - name: Generate .env with random secrets
+        run: scripts/gen_env.sh
+
+      - name: Validate the compose file (interpolation, required variables)
+        run: |
+          set -euo pipefail
+          docker compose config -q
+          services="$(docker compose config --services | sort | tr '\n' ' ')"
+          echo "services: ${services}"
+          [ "${services}" = "api nginx postgres redis worker " ]
+
+      - name: Static infrastructure tests
+        working-directory: apps/api
+        env:
+          PYTHONPATH: .
+        run: python -m pytest tests/unit/test_compose_stack.py -q
+
+      - name: Build the images
+        run: docker compose build --pull
+
+      - name: Start the stack and wait for health
+        run: docker compose up -d --wait --wait-timeout 300
+
+      - name: Migrate and seed through the running stack
+        run: |
+          set -euo pipefail
+          docker compose exec -T api alembic upgrade head
+          docker compose exec -T api python -m seeds
+
+      - name: Readiness through nginx (PostgreSQL + Redis + schema revision)
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/api/v1/health/ready -o /tmp/ready.json; then
+              break
+            fi
+            echo "attempt ${attempt}: not ready yet"; sleep 3
+          done
+          cat /tmp/ready.json
+          python - <<'PY'
+          import json
+
+          with open("/tmp/ready.json", encoding="utf-8") as handle:
+              payload = json.load(handle)
+          assert payload["status"] == "ready", payload
+          assert payload["schema_revision"] == "0001_initial_schema", payload
+          components = {component["name"]: component["status"] for component in payload["components"]}
+          assert components == {"postgresql": "ok", "redis": "ok"}, payload
+          PY
+
+      - name: Verify the worker is alive and registered its tasks
+        run: |
+          set -euo pipefail
+          docker compose exec -T worker celery -A app.worker.celery_app:celery_app inspect registered
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Tear down (volumes included)
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # ------------------------------------------------------------------- openapi
+  openapi:
+    name: OpenAPI document
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+      - name: Install runtime dependencies
+        run: pip install -r apps/api/requirements.txt
+      - name: Export docs/api/openapi.json
+        env:
+          # The document is generated from the app object; these values are never
+          # used to connect anywhere, they only satisfy the settings validator.
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci-openapi:ci-openapi@127.0.0.1:5432/nexus_exchange
+          DATABASE_MIGRATION_URL: postgresql+asyncpg://ci-openapi:ci-openapi@127.0.0.1:5432/nexus_exchange
+          JWT_SECRET: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
+          JWT_REFRESH_SECRET: c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2
+        run: scripts/gen_openapi.sh
+      - name: Upload the document
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi
+          path: docs/api/openapi.json

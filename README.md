@@ -2,10 +2,11 @@
 
 An offline-first, multi-currency, multi-branch ERP and point-of-sale system for **licensed** currency-exchange and money-service businesses.
 
-> **وضعیت فعلی — فاز ۰ تحویل شد و منتظر تأیید است.**
-> در این فاز فقط مستندات معماری، ERD، اسکیمای اجرایی، قرارداد API، طراحی همگام‌سازی آفلاین، معماری امنیت، مدل حسابداری و نقشه راه تولید شد. هیچ کد اپلیکیشنی نوشته نشده است؛ اجرای فاز ۱ پس از تأیید آغاز می‌شود.
+> **وضعیت فعلی — فاز ۰ و فاز ۱ تحویل شد؛ منتظر تأیید فاز ۱.**
+> فاز ۰: مستندات معماری، ERD، اسکیمای اجرایی، قرارداد API، طراحی همگام‌سازی، معماری امنیت، مدل حسابداری و نقشه راه.
+> فاز ۱: پایهٔ واقعی `apps/api` (FastAPI + Pydantic v2 + SQLAlchemy 2.x)، مهاجرت Alembic از اسکیمای تأییدشده، پشتهٔ پنج‌سرویسی Docker Compose، بذرکاری idempotent، بررسی سلامت/آمادگی، worker، CI و مجموعهٔ تست. هیچ endpoint کسب‌وکاری هنوز پیاده‌سازی نشده است؛ آن کار فاز ۲ است.
 >
-> **Current status — Phase 0 delivered, awaiting approval.** Phase 0 contains architecture and design artifacts only (plus an executable reference schema and its invariant test suite). Implementation starts with Phase 1 after approval.
+> **Current status — Phase 0 and Phase 1 delivered; Phase 1 awaits approval.** Phase 1 contains the API foundation, the initial Alembic revision built from the approved schema, the five-service compose stack, seeds, health/readiness, the worker and CI. No business endpoint exists yet — that is Phase 2.
 
 ## The five non-negotiables
 
@@ -44,7 +45,51 @@ Details and dependency rules: [`docs/architecture/FOLDER_STRUCTURE.md`](docs/arc
 | 8 | Accounting model | [`docs/architecture/ACCOUNTING_MODEL.md`](docs/architecture/ACCOUNTING_MODEL.md) |
 | 9 | Development roadmap (Phases 1–13) | [`docs/architecture/ROADMAP.md`](docs/architecture/ROADMAP.md) |
 
+## Phase 1 deliverables
+
+| # | Deliverable | Location |
+| --- | --- | --- |
+| 1 | API foundation (FastAPI, Pydantic v2, SQLAlchemy 2.x, layered packages) | [`apps/api/app/`](apps/api/app) |
+| 2 | ORM models for all 31 tables | [`apps/api/app/models/`](apps/api/app/models) |
+| 3 | Initial Alembic revision (applies the approved DDL verbatim, checksum-verified) | [`apps/api/alembic/`](apps/api/alembic) |
+| 4 | Seed runner (currencies, roles/permissions, chart of accounts; idempotent, `--check`) | [`apps/api/seeds/`](apps/api/seeds) |
+| 5 | Health, readiness and version endpoints | [`apps/api/app/api/v1/health.py`](apps/api/app/api/v1/health.py) |
+| 6 | Celery worker (audit-chain and ledger verification, token sweep, idempotency retention) | [`apps/api/app/worker/`](apps/api/app/worker) |
+| 7 | Five-service Docker Compose stack + nginx edge | [`docker-compose.yml`](docker-compose.yml), [`infrastructure/`](infrastructure) |
+| 8 | Schema gates (ORM↔live DB, reference file↔live DB) | [`apps/api/scripts/schema_gate.py`](apps/api/scripts/schema_gate.py) |
+| 9 | Operator scripts (`dev_up`, `migrate`, `seed`, `test_all`, `gen_env`, `gen_openapi`) | [`scripts/`](scripts) |
+| 10 | CI (lint, types, unit, integration + gates, compose stack, OpenAPI) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+| 11 | Deployment runbook | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
+
 Verification evidence and the test catalogue: [`docs/security/TEST_PLAN.md`](docs/security/TEST_PLAN.md).
+
+## Run the stack (Phase 1)
+
+```bash
+scripts/gen_env.sh            # writes .env (mode 600) with fresh random secrets
+scripts/dev_up.sh             # build → up --wait → alembic upgrade head → seeds → readiness
+curl -fsS http://127.0.0.1:8080/api/v1/health/ready
+```
+
+Five services: `nginx` (the only public entry point), `api`, `worker`, `postgres` 16 and `redis` 7.
+Full runbook, native (no-Docker) path, TLS, hardening checklist and troubleshooting:
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+## Verify Phase 1 yourself
+
+```bash
+cd apps/api
+PYTHONPATH=. python -m pytest tests/unit -q          # unit tests, no database needed
+PYTHONPATH=. python -m pytest tests/integration -q   # real PostgreSQL: migration, schema gates, seeds, invariants, worker
+python -m ruff check . && python -m mypy app seeds scripts
+
+# The database half needs PostgreSQL 16 (see docs/DEPLOYMENT.md §4):
+alembic upgrade head                                 # applies the approved schema, checksum-verified
+python -m scripts.schema_gate orm-db                 # ORM metadata ↔ live schema
+python -m scripts.schema_gate db-db --left <reference-dsn> --right <migrated-dsn>
+python -m seeds && python -m seeds --check           # idempotent seed data
+psql -d <fresh-db> -f ../tests/invariants/phase0_schema_invariants.sql
+```
 
 ## Verify the Phase 0 schema yourself
 
