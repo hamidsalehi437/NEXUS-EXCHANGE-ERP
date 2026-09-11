@@ -37,6 +37,7 @@ SEED_MODULES: tuple[str, ...] = (
     "seeds.002_roles_permissions",
     "seeds.003_chart_of_accounts",
     "seeds.004_dev_admin",
+    "seeds.005_dev_branch",
 )
 
 

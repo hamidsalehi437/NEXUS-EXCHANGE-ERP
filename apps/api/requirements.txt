@@ -19,6 +19,7 @@ redis==5.3.1
 celery==5.5.3
 structlog==26.1.0
 argon2-cffi==25.1.0
+PyJWT==2.14.0
 
 # Transitive pins that matter for correctness or security
 amqp==5.3.1

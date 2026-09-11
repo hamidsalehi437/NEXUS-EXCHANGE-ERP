@@ -1,0 +1,51 @@
+"""Canonical audit action names (PART 18).
+
+An audit action is a contract with the auditors: renaming one later means the history
+stops being queryable with a single filter. They therefore live in one enum, are used
+by services instead of string literals, and are asserted by tests so a typo cannot
+silently create a second, almost-identical action name.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class AuditAction(StrEnum):
+    """Every action the API records today (feature phases add their own)."""
+
+    # --- authentication ------------------------------------------------------
+    AUTH_LOGIN_SUCCEEDED = "AUTH_LOGIN_SUCCEEDED"
+    AUTH_LOGIN_FAILED = "AUTH_LOGIN_FAILED"
+    AUTH_LOGIN_DENIED = "AUTH_LOGIN_DENIED"
+    AUTH_LOCKOUT = "AUTH_LOCKOUT"
+    AUTH_LOGOUT = "AUTH_LOGOUT"
+    AUTH_REFRESH_ROTATED = "AUTH_REFRESH_ROTATED"
+    AUTH_REFRESH_FAILED = "AUTH_REFRESH_FAILED"
+    AUTH_PASSWORD_CHANGED = "AUTH_PASSWORD_CHANGED"  # noqa: S105
+    AUTH_PASSWORD_CHANGE_FAILED = "AUTH_PASSWORD_CHANGE_FAILED"  # noqa: S105
+    AUTH_CREDENTIAL_UPGRADED = "AUTH_CREDENTIAL_UPGRADED"
+
+    # --- session and device security ----------------------------------------
+    SECURITY_REFRESH_REUSE_DETECTED = "SECURITY_REFRESH_REUSE_DETECTED"
+    SECURITY_SESSION_REVOKED = "SECURITY_SESSION_REVOKED"
+    SECURITY_SESSION_REVOKED_BY_ADMIN = "SECURITY_SESSION_REVOKED_BY_ADMIN"
+    DEVICE_REGISTERED = "DEVICE_REGISTERED"
+    DEVICE_REGISTRATION_DENIED = "DEVICE_REGISTRATION_DENIED"
+    DEVICE_REVOKED = "DEVICE_REVOKED"
+
+    # --- user, role and permission administration ---------------------------
+    USER_CREATED = "USER_CREATED"
+    USER_UPDATED = "USER_UPDATED"
+    USER_DEACTIVATED = "USER_DEACTIVATED"
+    USER_ROLES_CHANGED = "USER_ROLES_CHANGED"
+    USER_PERMISSIONS_CHANGED = "USER_PERMISSIONS_CHANGED"
+    ROLE_PERMISSIONS_CHANGED = "ROLE_PERMISSIONS_CHANGED"
+
+    # --- administrative acts refused before they happen ---------------------
+    SECURITY_PRIVILEGE_ESCALATION_BLOCKED = "SECURITY_PRIVILEGE_ESCALATION_BLOCKED"
+
+
+# Actions that must never be attributed to "nobody": a failed login for an unknown
+# username has no user row, so the actor is null — every other entry names a user.
+ACTIONS_ALLOWING_NULL_ACTOR = frozenset({AuditAction.AUTH_LOGIN_FAILED})

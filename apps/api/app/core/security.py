@@ -14,6 +14,7 @@ transparently upgraded on the next login.
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 
 from argon2 import PasswordHasher as Argon2PasswordHasher
@@ -185,3 +186,24 @@ def build_password_hasher(
         memory_cost=memory_cost,
         parallelism=parallelism,
     )
+
+
+def normalize_ip_address(value: str | None) -> str | None:
+    """Return a value PostgreSQL's ``INET`` type accepts, or ``None``.
+
+    ``request.client.host`` is an address under uvicorn, but an ASGI server may report
+    something else: a placeholder from an unusual proxy chain, a UNIX-socket peer, or the
+    in-process test transport's literal ``testclient``. The client address is stored in
+    two ``INET`` columns (``audit_logs.ip_address``, ``refresh_tokens.ip_address``), and a
+    malformed value from the transport must never be able to fail an otherwise valid
+    login — the audit row is dropped to ``NULL`` instead, which is exactly how an
+    untraceable address should be recorded.
+    """
+    if not value:
+        return None
+    candidate = value.strip()
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+    return candidate

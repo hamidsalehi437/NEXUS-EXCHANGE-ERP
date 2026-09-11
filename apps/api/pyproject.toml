@@ -32,6 +32,9 @@ dependencies = [
   "celery[redis]==5.5.3",
   "structlog==26.1.0",
   "argon2-cffi==25.1.0",
+  # Access tokens (HS256, see SECURITY.md §2 and app/core/tokens.py). Pinned like every
+  # other runtime dependency: PART 56 requires reproducible builds.
+  "PyJWT==2.14.0",
 ]
 
 [project.optional-dependencies]
@@ -89,6 +92,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# FastAPI dependency injection is built on call-in-default (`Depends(...)`, `Query(...)`):
+# B008 is a false positive for every router module in this project.
+"app/api/**" = ["B008", "S105"]
 # Tests assert, carry deliberate fixture credentials, use temporary directories and
 # invoke real executables (alembic, the seed runner, git) on purpose.
 "tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607", "ARG001", "ARG002", "PLR2004"]

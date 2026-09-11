@@ -25,11 +25,11 @@ class RedisManager:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._client: aioredis.Redis[str] | None = None
+        self._client: aioredis.Redis | None = None
 
-    async def client(self) -> aioredis.Redis[str]:
+    async def client(self) -> aioredis.Redis:
         if self._client is None:
-            self._client = aioredis.from_url(
+            self._client = aioredis.from_url(  # type: ignore[no-untyped-call]
                 self._settings.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
@@ -47,8 +47,8 @@ class RedisManager:
 
     async def close(self) -> None:
         if self._client is not None:
-            # redis-py 5.x async API; its bundled stubs still declare close() only.
-            await self._client.aclose()  # type: ignore[attr-defined]
+            # redis-py 5.x async API (``close()`` is the deprecated spelling).
+            await self._client.aclose()
             self._client = None
 
     @staticmethod

@@ -178,6 +178,21 @@ def fetch_all(database: str, sql: str, **params: object) -> list[tuple[object, .
         engine.dispose()
 
 
+def execute_sql(database: str, sql: str, **params: object) -> int:
+    """Run a writing statement against ``database`` and return its row count.
+
+    Fixtures and assertions that must set up (or repair) database state directly use
+    this; the API itself is never reached this way.
+    """
+    engine = create_engine(database_dsn(database), future=True)
+    try:
+        with engine.begin() as connection:
+            result = connection.execute(text(sql), params)
+            return int(result.rowcount or 0)
+    finally:
+        engine.dispose()
+
+
 def fetch_scalar(database: str, sql: str, **params: object) -> object:
     rows = fetch_all(database, sql, **params)
     return rows[0][0] if rows else None
@@ -211,6 +226,65 @@ def read_checksums_file() -> dict[str, str]:
         digest, _, relative = stripped.partition("  ")
         checksums[relative.strip()] = digest.strip()
     return checksums
+
+
+# --------------------------------------------------------------------------- Phase 2
+def create_user(
+    database: str,
+    *,
+    username: str,
+    password: str,
+    roles: Sequence[str] = (),
+    is_active: bool = True,
+    must_change_password: bool = False,
+    email: str | None = None,
+    full_name: str | None = None,
+    locked_until: str | None = None,
+) -> str:
+    """Insert a user with real Argon2id credentials and role assignments.
+
+    Fixture data is created directly so a test that is *about* login does not depend on
+    user creation working; tests that exercise ``POST /users`` build their fixtures
+    through the API instead.
+    """
+    from app.core.security import build_password_hasher
+
+    hasher = build_password_hasher(time_cost=3, memory_cost=65_536, parallelism=4)
+    engine = create_engine(database_dsn(database), future=True)
+    try:
+        with engine.begin() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    INSERT INTO users (username, full_name, email, password_hash,
+                                       is_active, must_change_password, locked_until)
+                    VALUES (:username, :full_name, :email, :password_hash,
+                            :is_active, :must_change_password, CAST(:locked_until AS timestamptz))
+                    RETURNING id
+                    """
+                ),
+                {
+                    "username": username,
+                    "full_name": full_name or f"Test {username}",
+                    "email": email,
+                    "password_hash": hasher.hash(password),
+                    "is_active": is_active,
+                    "must_change_password": must_change_password,
+                    "locked_until": locked_until,
+                },
+            ).one()
+            user_id = str(rows[0])
+            for role in roles:
+                connection.execute(
+                    text(
+                        "INSERT INTO user_roles (user_id, role_id) "
+                        "SELECT :user_id, id FROM roles WHERE name = :role"
+                    ),
+                    {"user_id": user_id, "role": role},
+                )
+        return user_id
+    finally:
+        engine.dispose()
 
 
 def git_tracked_files(*patterns: str) -> Sequence[str]:

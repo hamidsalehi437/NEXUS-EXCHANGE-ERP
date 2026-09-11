@@ -12,6 +12,8 @@ transaction (no permission in this system grants that — see ``SECURITY.md`` §
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Iterable
 from enum import StrEnum
 
 
@@ -211,6 +213,25 @@ ROLE_PERMISSIONS: dict[RoleName, frozenset[Permission]] = {
 
 # Roles that may never be edited or deleted by an operator.
 SYSTEM_ROLES: frozenset[RoleName] = frozenset({RoleName.SUPER_ADMIN})
+
+
+def permission_hash(permissions: Iterable[str]) -> str:
+    """Stable fingerprint of a permission set, carried in the access token.
+
+    ``perm_hash`` exists so a token minted before an authorisation change cannot be
+    used after it: the API recomputes the effective permission set on every request
+    (from the database — never from the token) and rejects the token when the
+    fingerprint differs. Sorting makes the value independent of query order; the
+    digest is truncated to 128 bits because it is a change detector, not a secret.
+    """
+    canonical = "\n".join(sorted(str(permission) for permission in permissions))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
+
+def known_permissions() -> frozenset[str]:
+    """Every permission code the codebase knows (used to validate operator input)."""
+    return frozenset(str(permission) for permission in Permission)
+
 
 # Documented for reviewers: no permission in the system authorises editing or
 # deleting a posted financial record. Cancellation and reversal are modelled as

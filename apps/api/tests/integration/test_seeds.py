@@ -34,6 +34,17 @@ _CURRENCY_COUNT = 7
 _ROLE_COUNT = 6
 _PERMISSION_COUNT = 31
 _ACCOUNT_COUNT = 42
+# Phase 2 added seed 005: the bootstrap branch a first device can register against.
+# It creates exactly one row, and only in the development/test bootstrap environment.
+_BRANCH_COUNT = 1
+# First run: the reference rows above, plus the bootstrap branch, plus the development
+# administrator — which counts two rows (the user and its SUPER_ADMIN assignment).
+_TOTAL_ROWS_ON_FIRST_RUN = (
+    _CURRENCY_COUNT + _ROLE_COUNT + _PERMISSION_COUNT + _ACCOUNT_COUNT + _BRANCH_COUNT + 2
+)
+# Later runs: the administrator module reports a single "unchanged" row (it returns as
+# soon as it sees the existing user, so the role assignment is not counted again).
+_TOTAL_ROWS_ON_LATER_RUNS = _TOTAL_ROWS_ON_FIRST_RUN - 1
 
 
 def _totals(output: str) -> dict[str, int]:
@@ -66,7 +77,9 @@ class TestFirstRun:
         result = run_seeds(seed_database, extra_env=SEED_ENV)
         assert result.returncode == 0, result.stderr
         totals = _totals(result.stdout)
-        assert totals["inserted"] == 88
+        # 7 currencies + 6 roles + 31 permissions + 42 accounts + 1 branch + the
+        # development administrator (user + role assignment are counted as two rows).
+        assert totals["inserted"] == _TOTAL_ROWS_ON_FIRST_RUN
         assert totals["updated"] == 0
         assert totals["removed"] == 0
 
@@ -74,8 +87,13 @@ class TestFirstRun:
         result = run_seeds(seed_database, extra_env=SEED_ENV)
         assert result.returncode == 0, result.stderr
         totals = _totals(result.stdout)
-        # 86 reference rows + the existing development administrator.
-        assert totals == {"inserted": 0, "updated": 0, "unchanged": 87, "removed": 0}
+        # Every row from the first run is reported unchanged, including the branch.
+        assert totals == {
+            "inserted": 0,
+            "updated": 0,
+            "unchanged": _TOTAL_ROWS_ON_LATER_RUNS,
+            "removed": 0,
+        }
 
     def test_third_run_is_still_a_no_op(self, seed_database: str) -> None:
         result = run_seeds(seed_database, extra_env=SEED_ENV)
@@ -96,11 +114,12 @@ class TestCheckModeIsNotVacuous:
             migrate(name)
             result = run_seeds(name, "--check", extra_env=SEED_ENV)
             assert result.returncode != 0  # a fresh database needs seeding
-            assert _totals(result.stdout)["inserted"] == 88
+            assert _totals(result.stdout)["inserted"] == _TOTAL_ROWS_ON_FIRST_RUN
             # Nothing was written: the check rolls its transaction back.
             assert fetch_scalar(name, "SELECT count(*) FROM currencies") == 0
             assert fetch_scalar(name, "SELECT count(*) FROM roles") == 0
             assert fetch_scalar(name, "SELECT count(*) FROM users") == 0
+            assert fetch_scalar(name, "SELECT count(*) FROM branches") == 0
         finally:
             drop_database(name)
 

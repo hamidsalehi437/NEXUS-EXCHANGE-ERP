@@ -138,8 +138,14 @@ class Settings(BaseSettings):
     trusted_hosts: str = "localhost,127.0.0.1"
     rate_limit_enabled: bool = True
     rate_limit_auth_per_5min: int = Field(default=10, ge=0)
+    rate_limit_refresh_per_min: int = Field(default=60, ge=0)
     rate_limit_write_per_min: int = Field(default=120, ge=0)
     rate_limit_read_per_min: int = Field(default=600, ge=0)
+    # What a Redis outage means for rate-limited endpoints. Default (false) keeps the
+    # counter working: the request is allowed and the outage is logged loudly, while the
+    # database-backed account lockout still blocks brute force. Set true to refuse
+    # instead (503) when the deployment prefers a hard guarantee over availability.
+    rate_limit_fail_closed: bool = False
     secure_headers_enabled: bool = True
     force_https: bool = False
 

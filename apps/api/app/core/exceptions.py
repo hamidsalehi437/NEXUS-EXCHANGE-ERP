@@ -30,6 +30,11 @@ class ErrorCode(StrEnum):
     DEVICE_UNKNOWN = "DEVICE_UNKNOWN"
     DEVICE_MISMATCH = "DEVICE_MISMATCH"
     ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
+    # Additive v1 code (Phase 2): a deactivated account must be distinguishable from a
+    # wrong password so support can answer "why can I not log in?" without guesswork.
+    # It is returned only *after* the password verified, so it leaks nothing to an
+    # attacker probing usernames.
+    ACCOUNT_DISABLED = "ACCOUNT_DISABLED"
     PERMISSION_DENIED = "PERMISSION_DENIED"
     FORBIDDEN_SCOPE = "FORBIDDEN_SCOPE"
     RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
@@ -81,9 +86,14 @@ class NexusError(Exception):
         details: dict[str, Any] | None = None,
         code: ErrorCode | None = None,
         http_status: int | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.message = message or self.default_message
         self.details: dict[str, Any] = details or {}
+        # Response headers the error demands (``Retry-After`` on 429/503). The envelope
+        # handler applies them, so every rejection carries the same shape *and* the same
+        # protocol hints a client needs to back off correctly.
+        self.headers: dict[str, str] = headers or {}
         if code is not None:
             self.code = code
         if http_status is not None:
@@ -130,15 +140,76 @@ class DataIntegrityError(NexusError):
 
 # --- Authentication and authorisation ---------------------------------------
 class AuthenticationError(NexusError):
+    """401 for every credential/token problem, with the specific contract code."""
+
     code = ErrorCode.TOKEN_INVALID
     http_status = 401
     default_message = "Authentication is required."
+
+
+class InvalidCredentialsError(AuthenticationError):
+    code = ErrorCode.INVALID_CREDENTIALS
+    default_message = "The username or password is incorrect."
+
+
+class TokenInvalidError(AuthenticationError):
+    code = ErrorCode.TOKEN_INVALID
+    default_message = "The token is not valid."
+
+
+class TokenExpiredError(AuthenticationError):
+    code = ErrorCode.TOKEN_EXPIRED
+    default_message = "The token has expired."
+
+
+class TokenRevokedError(AuthenticationError):
+    code = ErrorCode.TOKEN_REVOKED
+    default_message = "This session has been revoked. Sign in again."
+
+
+class DeviceRevokedError(AuthenticationError):
+    code = ErrorCode.DEVICE_REVOKED
+    default_message = "This device has been revoked."
+
+
+class DeviceUnknownError(AuthenticationError):
+    code = ErrorCode.DEVICE_UNKNOWN
+    default_message = "This device is not registered."
+
+
+class DeviceMismatchError(AuthenticationError):
+    code = ErrorCode.DEVICE_MISMATCH
+    default_message = "The token does not belong to this device."
 
 
 class PermissionDeniedError(NexusError):
     code = ErrorCode.PERMISSION_DENIED
     http_status = 403
     default_message = "You do not have permission to perform this action."
+
+
+class AccountDisabledError(NexusError):
+    """The credentials were correct, but the account is deactivated (PART 25)."""
+
+    code = ErrorCode.ACCOUNT_DISABLED
+    http_status = 401
+    default_message = "This account is deactivated. Contact an administrator."
+
+
+class AccountLockedError(NexusError):
+    """Too many failed logins; the account is temporarily locked."""
+
+    code = ErrorCode.ACCOUNT_LOCKED
+    http_status = 423
+    default_message = "The account is temporarily locked after repeated failed logins."
+
+
+class RateLimitedError(NexusError):
+    """A rate-limit bucket is exhausted (PART 42)."""
+
+    code = ErrorCode.RATE_LIMITED
+    http_status = 429
+    default_message = "Too many requests. Retry later."
 
 
 class ForbiddenScopeError(NexusError):

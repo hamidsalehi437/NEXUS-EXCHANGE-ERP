@@ -53,6 +53,7 @@ def _envelope(
     message: str,
     details: dict[str, Any] | None = None,
     status_code: int,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     payload: dict[str, Any] = {
         "error": {"code": code, "message": message, "details": details or {}}
@@ -60,7 +61,7 @@ def _envelope(
     request_id = request_id_var.get()
     if request_id:
         payload["request_id"] = request_id
-    return JSONResponse(status_code=status_code, content=payload)
+    return JSONResponse(status_code=status_code, content=payload, headers=headers or None)
 
 
 def _constraint_name(exc: IntegrityError) -> str | None:
@@ -94,6 +95,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             message=exc.message,
             details=exc.details,
             status_code=exc.http_status,
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)
