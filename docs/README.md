@@ -39,8 +39,8 @@ foundation: login with Argon2id and device binding, DB-backed lockout, HS256 acc
 re-validated against the database on every request, refresh rotation with reuse detection,
 logout/session/device revocation, users/roles/permissions administration with anti-escalation
 guards, audit attribution for every authentication event, and HTTP-surface rate limiting.
-**No schema change was required.** `pytest tests` → **759 passed** (500 Phase 0/1 regression +
-259 new Phase 2 tests), Ruff (`check` + `format --check`) and MyPy clean, both schema gates
+**No schema change was required.** `pytest tests` → **761 passed** (500 Phase 0/1 regression +
+261 new Phase 2 tests), Ruff (`check` + `format --check`) and MyPy clean, both schema gates
 MATCH, and the Phase 0 invariant suite green (52 assertions) on a freshly migrated database.
 No business endpoint is implemented yet; master data starts in Phase 3, which has **not** been started.
 The permanent, reviewable evidence for Phase 2 is [`phases/PHASE2_REPORT.md`](phases/PHASE2_REPORT.md).

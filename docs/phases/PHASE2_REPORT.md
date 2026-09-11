@@ -46,7 +46,7 @@ The 18 scope items and their outcome:
 | 14 | Rate limiting | Login (10/5 min per IP+username) and refresh (60/min per device) enforced at the HTTP surface |
 | 15 | Account / session revocation | Logout, session revoke, device revoke, password change, deactivation, `jti` denylist |
 | 16 | API authorization dependencies | `app/api/deps.py`: principal resolution, permission dependencies, device header check |
-| 17 | Comprehensive auth/security tests | 259 new tests (see §12) |
+| 17 | Comprehensive auth/security tests | 261 new tests (see §15) |
 | 18 | Documentation updates | `API_CONTRACT.md` v1.1, `SECURITY.md` v1.1, `TEST_PLAN.md` v1.1, `ROADMAP.md` v1.1, `docs/README.md`, this report, `PROJECT_STATUS.md` |
 
 Out of scope, per the master prompt: financial transaction logic, any Phase 3 master data
@@ -301,6 +301,7 @@ rolls back.
 | 10 | The autouse `clear_rate_limits` fixture required a live Redis for **every** test, so the CI unit-test job (no Redis service) and the compose job's static infrastructure step failed | GitHub Actions results, cross-checked against the Phase 1 run | The fixture tolerates an unreachable Redis unless `NEXUS_TEST_REDIS_URL` is set explicitly; the Redis-backed limiter tests moved from `tests/unit/` to `tests/integration/` |
 | 11 | Ten Phase 2 files were not `ruff format` clean, failing the CI lint job | GitHub Actions lint job + local `ruff format --check` | `ruff format .` applied; the gate now reports 100 files already formatted |
 | 12 | The CI integration job could never reach its migration/schema-gate/Phase 0 steps: those commands load `Settings`, which requires `JWT_SECRET`/`JWT_REFRESH_SECRET` (a pre-existing Phase 1 defect, visible on Phase 1 runs too) | Step-level CI analysis (`Migration on a clean database` failed, tests passed) | Job-level `APP_ENV`/`JWT_SECRET`/`JWT_REFRESH_SECRET` (CI-only values) added to the integration job; the seed idempotency expectations were updated from 88/87 to 89/88 rows after seed 005 |
+| 13 | Two CI steps read reference files through paths that do not exist from their working directory (`-f ../docs/database/schema.sql` and `-f ../tests/invariants/phase0_schema_invariants.sql` in a step that runs in `apps/api` resolve to `apps/docs/...` and `apps/tests/...`), so the `db-db` schema gate and the Phase 0 step could never run in CI | Step-level analysis of the CI runs; reproduced locally with the real `psql` binary (`No such file or directory`) | Both steps resolve the path from `$(git rev-parse --show-toplevel)`; two new static tests (`TestCiWorkflowPaths`) assert that every `working-directory` exists and that every `-f <file>` a step reads resolves to a real file |
 
 Test-side issues found and corrected while writing the suites (kept here because they
 explain the final test shape): the locked account blocks the login bucket before the bucket
@@ -317,8 +318,8 @@ Python 3.11.2 with the pinned dependency set) from `apps/api`.
 
 | # | Command | Result |
 | --- | --- | --- |
-| 1 | `PYTHONPATH=. NEXUS_TEST_REDIS_URL="redis://:nexuslocaldev@127.0.0.1:6379/15" python -m pytest tests -q` | **759 passed** in 103.62 s |
-| 2 | `PYTHONPATH=. python -m pytest tests/unit -q` (no Redis, CI unit-job shape) | **433 passed** in 1.43 s |
+| 1 | `PYTHONPATH=. NEXUS_TEST_REDIS_URL="redis://:nexuslocaldev@127.0.0.1:6379/15" python -m pytest tests -q` | **761 passed** in 104.97 s |
+| 2 | `PYTHONPATH=. python -m pytest tests/unit -q` (no Redis, CI unit-job shape) | **435 passed** in 1.72 s |
 | 3 | `PYTHONPATH=. python -m pytest tests/unit/test_compose_stack.py -q` (no Redis, CI static-infrastructure shape) | **55 passed** in 0.21 s |
 | 4 | `python -m ruff check .` | All checks passed |
 | 5 | `python -m ruff format --check .` | 100 files already formatted |
@@ -332,7 +333,7 @@ Python 3.11.2 with the pinned dependency set) from `apps/api`.
 Per-suite test counts (final state): `test_auth_login` 39, `test_auth_tokens` 44,
 `test_auth_authorization` 33, `test_users_admin` 52, `test_devices` 23,
 `test_auth_rate_limit` 15, `test_auth_audit` 10, `test_tokens` 30, `test_rate_limit` 13 →
-**259 new tests**.
+**261 new tests** (the two CI guard tests of §14 item 13 are part of the same suite).
 
 Required test minimums (PART 48, Phase 2 list) and where each is proved:
 
@@ -356,8 +357,8 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
 
 ## 16. Regression results
 
-* Full suite: **759 passed, 0 failed** (500 Phase 0/1 tests including the updated seed
-  expectations + 259 new Phase 2 tests).
+* Full suite: **761 passed, 0 failed** (500 Phase 0/1 tests including the updated seed
+  expectations + 261 new Phase 2 tests).
 * Phase 1 areas re-verified unchanged: health/readiness/version (18 tests), migration and
   seeds (34 tests), schema gates (19 tests), Phase 0 invariants through the API-level suite
   (15 tests), compose specification checks (55 tests), configuration validation (60 tests),
@@ -399,10 +400,12 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
      `JWT_SECRET`/`JWT_REFRESH_SECRET` — a defect that predates Phase 2 and is visible on the
      Phase 1 runs too. The job now carries CI-only values for those fields, and the seed
      expectations were updated from 88/87 to 89/88 rows for seed 005.
-   * The integration job's `pytest (integration)` step **passed** in CI for Phase 1 and is
-     expected to pass for Phase 2; the schema-gate, seed-idempotency and Phase 0 steps never
-     ran in CI before because the migration step failed first. The CI run for the
-     finalization commit is the authoritative confirmation.
+   * Run for `58eada2` (the report commit, after those fixes): **lint, type check, unit
+     tests and OpenAPI all pass**; the integration job now runs the whole suite and the
+     migration step, and fails at `Schema gate — reference file vs migrated database` because
+     that step (and the Phase 0 step) read their reference file through a path that does not
+     exist from `apps/api` — defect 13 in §14, reproduced locally with `psql` and fixed the
+     same day; the compose job still fails at `Migrate and seed through the running stack`.
    * The compose job **did** build the images, raise the stack and reach healthy state in CI
      on the Phase 1 runs (the `Build the images` and `Start the stack and wait for health`
      steps succeeded); it fails at `Migrate and seed through the running stack`
@@ -410,6 +413,8 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
      not be determined from here: job logs and artifacts are not downloadable in this sandbox
      (the GitHub results host is blocked) and there is no Docker CLI to reproduce it.
      Reported as **NOT VERIFIED** and handed to a reviewer with Docker access.
+   * The CI run for the commit that contains this report is the authoritative record of the
+     final job states; the pull-request checks page shows them alongside this document.
 3. **Python version** — the sandbox interpreter is 3.11.2, while the project targets 3.12+
    (CI uses 3.12). The suite and the static tooling pass on 3.11; the CI type-check and
    lint jobs (3.12) are the authoritative check for the target interpreter, and they pass
@@ -450,14 +455,14 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
 | No financial transaction logic in this phase | **PASS** | No business endpoint beyond auth/admin; no ledger code touched |
 | Do not modify approved accounting invariants | **PASS** | Phase 0 invariant suite green (52 assertions); no ledger change |
 | No Phase 0 schema modification without a justified migration | **PASS** | No schema change at all; gates MATCH |
-| Full Phase 2 suite + full regression suite pass | **PASS** | 759 passed / 0 failed (§15–§16) |
+| Full Phase 2 suite + full regression suite pass | **PASS** | 761 passed / 0 failed (§15–§16) |
 | Phase 0 invariants re-run | **PASS** | 52 assertions on a fresh database |
 | ORM/schema parity re-run | **PASS** | 31 tables / 341 columns MATCH |
 | Migration checks re-run | **PASS** | Fresh `alembic upgrade head`, head unchanged, db-db MATCH |
-| Ruff | **PASS** | `ruff check` + `ruff format --check` clean |
+| Ruff | **PASS** | `ruff check` + `ruff format --check` clean (also green in CI) |
 | MyPy | **PASS** | 70 source files, no issues |
 | Docker Compose verification | **NOT VERIFIED** | No Docker in this environment (§18.1) |
-| GitHub CI green | **PARTIAL** | Lint, type, unit and integration causes fixed by the finalization commit (CI run to confirm); the compose job's in-container migrate/seed step remains red and cannot be diagnosed here (§18.2) |
+| GitHub CI green | **PARTIAL** | Lint, type, unit and OpenAPI jobs are green in CI; the integration job's remaining red step was diagnosed and fixed (defect 13); the compose job's in-container migrate/seed step remains red and cannot be diagnosed here (§18.2) |
 | Python 3.12 verification | **NOT VERIFIED** | 3.11.2 in this sandbox; CI runs 3.12 (lint/type/openapi green there) |
 
 ## 21. Declaration

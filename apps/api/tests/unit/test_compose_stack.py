@@ -36,6 +36,7 @@ NGINX_DIR = REPO_ROOT / "infrastructure" / "nginx"
 POSTGRES_INIT = REPO_ROOT / "infrastructure" / "postgres" / "init"
 REDIS_CONF = REPO_ROOT / "infrastructure" / "redis" / "nexus.conf"
 SCRIPTS_DIR = REPO_ROOT / "scripts"
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 REQUIRED_SERVICES = {"api", "postgres", "redis", "nginx", "worker"}
 
@@ -501,3 +502,42 @@ class TestOperatorScripts:
         text = path.read_text()
         assert "set -euo pipefail" in text
         assert "ON_ERROR_STOP=1" in text
+
+
+class TestCiWorkflowPaths:
+    """Every file the CI workflow reads must exist, resolved the way the shell would.
+
+    A relative path is resolved against the step's ``working-directory``: ``-f ../docs/...``
+    in a step that runs in ``apps/api`` points at ``apps/docs/...``, not at the repository's
+    ``docs/``. Two gates were lost to exactly that mistake before this test existed, so the
+    resolution is asserted here instead of being trusted.
+    """
+
+    @staticmethod
+    def _steps() -> list[dict[str, Any]]:
+        workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+        return [step for job in workflow["jobs"].values() for step in job.get("steps", [])]
+
+    def test_every_working_directory_exists(self) -> None:
+        missing = [
+            step["working-directory"]
+            for step in self._steps()
+            if step.get("working-directory")
+            and not (REPO_ROOT / step["working-directory"]).is_dir()
+        ]
+        assert not missing, f"CI steps run in directories that do not exist: {missing}"
+
+    def test_every_file_a_step_reads_exists(self) -> None:
+        missing: list[str] = []
+        for step in self._steps():
+            command = step.get("run", "")
+            working_directory = step.get("working-directory") or "."
+            # ``-f <path>`` is how every gate reads a reference file (psql) in this workflow.
+            for match in re.finditer(r"-f\s+(\S+)", command):
+                candidate = match.group(1).strip("\"'")
+                if candidate.startswith("$"):
+                    continue  # interpolated at run time; the value is checked by its step
+                target = (REPO_ROOT / working_directory / candidate).resolve()
+                if not target.exists():
+                    missing.append(f"{step.get('name')}: {candidate} -> {target}")
+        assert not missing, f"CI steps reference files that do not exist: {missing}"

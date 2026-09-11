@@ -177,8 +177,9 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c "DROP DATABASE IF EXISTS nexus_ci_reference WITH (FORCE)" \
             -c "CREATE DATABASE nexus_ci_reference"
+          repo_root="$(git rev-parse --show-toplevel)"
           psql -h 127.0.0.1 -U postgres -d nexus_ci_reference -v ON_ERROR_STOP=1 \
-            -q -f ../docs/database/schema.sql
+            -q -f "${repo_root}/docs/database/schema.sql"
           PYTHONPATH=. python -m scripts.schema_gate db-db \
             --left postgresql+psycopg://postgres:postgres@127.0.0.1:5432/nexus_ci_reference \
             --right postgresql+psycopg://postgres:postgres@127.0.0.1:5432/nexus_ci_clean
@@ -210,8 +211,9 @@ jobs:
             -c "DROP DATABASE IF EXISTS nexus_ci_phase0 WITH (FORCE)" \
             -c "CREATE DATABASE nexus_ci_phase0"
           alembic upgrade head
+          repo_root="$(git rev-parse --show-toplevel)"
           psql -h 127.0.0.1 -U postgres -d nexus_ci_phase0 -v ON_ERROR_STOP=1 \
-            -f ../tests/invariants/phase0_schema_invariants.sql 2>&1 | tee /tmp/phase0.log
+            -f "${repo_root}/tests/invariants/phase0_schema_invariants.sql" 2>&1 | tee /tmp/phase0.log
           grep -q "PHASE 0 SCHEMA INVARIANT SUITE: ALL ASSERTIONS PASSED" /tmp/phase0.log
 
       - name: Upload integration test results and logs
