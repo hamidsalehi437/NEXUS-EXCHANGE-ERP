@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.3 |
+| Version | 1.4 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -71,11 +71,15 @@ Notes:
   produces an audit row; `currencies.code` has no edit path (schema, service and `NEX06`
   trigger). Full regression: **905 passed**.
 * Phase 4 commits: `3a985fd` (start, last Phase 3 commit — *docs(phase3): pin the implementation
-  commit and record the green CI runs*) → the **implementation commit** on branch
-  `arena/01a090c5-nexus-exchange-erp` (`feat(accounting): complete phase 4 double-entry engine`;
-  33 files, +12 033/−61 — 16 production/tooling, 11 test and 6 documentation files, including
-  `docs/phases/PHASE4_REPORT.md`) → the **finalisation commit** (documentation only) that pins
-  that hash and records the Phase 4 CI runs, at the top of the branch and visible in `git log`.
+  commit and record the green CI runs*) → **`da0c9ff`**
+  (`da0c9ff261123fd41b2806052adb1f82ecd21f33`, *feat(accounting): complete phase 4 double-entry engine*; 33 files, +12 033/−61 — 16 production/tooling, 11 test and 6 documentation
+  files, including `docs/phases/PHASE4_REPORT.md`), pushed to branch
+  `arena/01a090c5-nexus-exchange-erp` → the **finalisation commit** (documentation only) that pins
+  this hash and records the CI runs, at the top of the branch and visible in `git log`.
+* Phase 4 CI on `da0c9ff`: push run `34656339711` and pull-request run `34656343155`, both
+  `completed`/**`success`** with all six jobs green and every step of *Integration tests and
+  schema gates* green (`pytest (integration)`, migration on a clean database, both schema gates,
+  seed idempotency — `inserted=89` then `unchanged=88` twice — and the Phase 0 invariant suite).
 * Phase 4 verification on the implementation commit: `pytest tests -q` → **1148 passed**
   (0 failed, 0 skipped) in 165.04 s and again in 172.38 s on the committed tree; `ruff check .` → clean, `ruff format --check .` → 135 files
   already formatted; `mypy app seeds scripts` → no issues in 89 source files; fresh-database
@@ -114,7 +118,7 @@ Each phase must, before it is declared complete:
 | Limitation | Impact | Status |
 | --- | --- | --- |
 | No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seeds, development administrator, login and readiness through nginx, worker registration) and its step conclusions are the evidence | **All 15 compose steps green** in run `34628225139` |
-| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`. **Green for Phase 3** — run `34645985626` (push) and `34645990882` (PR) on `db85e21`: both `completed`/`success`, all six jobs `success` in each run (the only non-success step is `Container logs on failure`, `skipped` by design) |
+| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`. **Green for Phase 3** — run `34645985626` (push) and `34645990882` (PR) on `db85e21`. **Green for Phase 4** — run `34656339711` (push) and `34656343155` (PR) on `da0c9ff`: both `completed`/`success`, all six jobs `success` in each run, every *Integration tests and schema gates* step `success` (the only non-success step is `Container logs on failure`, `skipped` by design) |
 | Python 3.11.2 (system interpreter) instead of 3.12 | Runtime differs from the target interpreter; dependency set and code target 3.12 | Known; documented per phase |
 | No command-line `redis-cli`/`psql` on `PATH` | Verification uses the driver-level scripts (`scripts/schema_gate.py`, `tests/invariants/*.sql` executed through psycopg) | Worked around |
 
@@ -125,4 +129,5 @@ Each phase must, before it is declared complete:
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
 | 1.1 | 2026-09-12 | Phase 2 marked **APPROVED**; Phase 3 marked **READY FOR REVIEW** with `docs/phases/PHASE3_REPORT.md`; Phase 3 commit chain and the "no migration needed" note added; Phase 4–17 remain NOT STARTED |
 | 1.2 | 2026-09-12 | Phase 3 finalisation: the implementation commit pinned as `db85e21` with its exact diff stat and the full verification results (905 passed / ruff / mypy / migration / gates / Phase 0 invariants / seeds); the Phase 3 CI runs `34645985626` and `34645990882` recorded in the environment table. Phase 3 stays **READY FOR REVIEW** (not approved) and Phase 4–17 stay **NOT STARTED** |
+| 1.4 | 2026-09-12 | Phase 4 finalisation: the implementation commit pinned as **`da0c9ff`** with its exact diff stat (33 files, +12 033/−61) and its two green CI runs (`34656339711` push, `34656343155` pull request) recorded in the environment table. Phase 4 stays **READY FOR REVIEW** (not approved) and Phase 5–17 stay **NOT STARTED** |
 | 1.3 | 2026-09-12 | Phase 3 marked **APPROVED**; Phase 4 marked **READY FOR REVIEW** with `docs/phases/PHASE4_REPORT.md`; Phase 4 commit chain, exact diff stat, full verification results (1148 passed / ruff / mypy / migration / both schema gates / Phase 0 invariants / seeds) and the no-migration + rate-snapshot decision recorded. Phase 4 stays **READY FOR REVIEW** (not approved) and Phase 5–17 stay **NOT STARTED** |

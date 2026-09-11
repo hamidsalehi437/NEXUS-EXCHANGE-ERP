@@ -50,11 +50,21 @@ The rate-snapshot review is answered in §13: **no schema change**, with the emp
 
 ## 4. Final commit
 
-The implementation, tests and documentation of this phase are committed as one commit
-`feat(accounting): complete phase 4 double-entry engine`; its exact hash is pinned by the
-documentation-only finalisation commit that follows it (the same pattern Phase 2 and
-Phase 3 used) and is visible at the top of `git log`. The finalisation commit also records
-the CI runs of the implementation commit.
+The implementation, tests and documentation of this phase are one commit:
+
+| Field | Value |
+| --- | --- |
+| Commit | **`da0c9ff261123fd41b2806052adb1f82ecd21f33`** (`da0c9ff`), *feat(accounting): complete phase 4 double-entry engine* |
+| Parent | `3a985fd` — *docs(phase3): pin the implementation commit and record the green CI runs* (the last Phase 3 commit) |
+| Contents | 33 files, +12 033/−61 — 16 production/tooling, 11 test, 6 documentation |
+| Branch | `arena/01a090c5-nexus-exchange-erp` (pushed; pull request #1) |
+| CI (push) | run **`34656339711`** — `completed` / `success`, all six jobs green |
+| CI (pull request) | run **`34656343155`** — `completed` / `success`, all six jobs green |
+
+The hash is pinned here by the documentation-only finalisation commit that follows it (the
+same pattern Phase 2 and Phase 3 used), which is also where the implementation commit's CI
+runs are recorded. No source file differs between the implementation commit and that
+finalisation commit.
 
 ## 5. Files created and modified
 
@@ -635,12 +645,30 @@ All three CI grep patterns match exactly.
 
 ## 36. CI results
 
-The implementation commit is pushed to `arena/01a090c5-nexus-exchange-erp`, which runs the
-six CI jobs (`lint`, `typecheck`, `unit`, `integration` — integration suite, migration,
-both schema gates, seed idempotency, Phase 0 invariants —, `compose-stack`, `openapi`). The
-exact runs and their job/step conclusions are recorded in `docs/PROJECT_STATUS.md` §3 and
-in the finalisation commit, by the same read-back procedure Phase 2 and Phase 3 used (job
-logs are not retrievable from this sandbox; step conclusions and check annotations are).
+`da0c9ff` is pushed to `arena/01a090c5-nexus-exchange-erp`; GitHub Actions ran the six jobs
+(`lint`, `typecheck`, `unit`, `integration` — integration suite, migration, both schema
+gates, seed idempotency, Phase 0 invariants —, `compose-stack`, `openapi`) twice, once for
+the push and once for the pull request:
+
+| Run | Event | Status | Jobs |
+| --- | --- | --- | --- |
+| `34656339711` | push | `completed` / **`success`** | Lint (ruff) ✓ · Unit tests ✓ · Type check (mypy) ✓ · OpenAPI document ✓ · Integration tests and schema gates ✓ · Compose stack (PART 44 acceptance) ✓ |
+| `34656343155` | pull_request | `completed` / **`success`** | the same six jobs, all `success` |
+
+The only step that is not `success` anywhere is `Container logs on failure`, which is
+`skipped` by design because nothing failed. Inside *Integration tests and schema gates*,
+every step concluded `success` — `pytest (integration)`, `Migration on a clean database`,
+`Schema gate — ORM metadata vs migrated database`, `Schema gate — reference file vs migrated
+database`, `Seed idempotency (first run / second run / --check)`, `Phase 0 invariant suite on
+a fresh migrated database` — which means CI's own assertions matched:
+
+* `TOTAL: inserted=89 updated=0 unchanged=0 removed=0` on the first seed run;
+* `TOTAL: inserted=0 updated=0 unchanged=88 removed=0` on the second run and on `--check`;
+* `PHASE 0 SCHEMA INVARIANT SUITE: ALL ASSERTIONS PASSED`.
+
+Both runs are read back through the API (job and step conclusions plus check-run
+annotations); job *logs* are not retrievable from this sandbox, which is the standing
+environment limitation recorded in `docs/PROJECT_STATUS.md` §3.
 
 ## 37. Limitations
 
