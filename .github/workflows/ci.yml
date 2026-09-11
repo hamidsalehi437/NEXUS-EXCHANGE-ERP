@@ -310,22 +310,14 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:8080/api/v1/health/ready -o /tmp/ready.json; then
+            # --fail-with-body keeps the payload of a 503 so the assertion below can
+            # report what is degraded instead of "no payload".
+            if curl -fsS --fail-with-body http://127.0.0.1:8080/api/v1/health/ready -o /tmp/ready.json; then
               break
             fi
             echo "attempt ${attempt}: not ready yet"; sleep 3
           done
-          cat /tmp/ready.json
-          python - <<'PY'
-          import json
-
-          with open("/tmp/ready.json", encoding="utf-8") as handle:
-              payload = json.load(handle)
-          assert payload["status"] == "ready", payload
-          assert payload["schema_revision"] == "0001_initial_schema", payload
-          components = {component["name"]: component["status"] for component in payload["components"]}
-          assert components == {"postgresql": "ok", "redis": "ok"}, payload
-          PY
+          scripts/ci_exec_report.sh "nginx readiness assertions" python3 scripts/ci_assert_ready.py /tmp/ready.json
 
       - name: Verify the worker is alive and registered its tasks
         run: |

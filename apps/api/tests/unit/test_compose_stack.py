@@ -15,6 +15,7 @@ anything about the real thing.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -602,6 +603,72 @@ class TestGeneratedEnvironment:
         assert result.returncode != 0, "the generator accepted an ambiguous empty value"
         assert "DEV_ADMIN_PASSWORD" in (result.stderr + result.stdout), result
         assert not (tmp_path / ".env").exists(), "no .env may be written from an ambiguous template"
+
+
+class TestCiReadinessContract:
+    """The compose acceptance job asserts the readiness payload through a script.
+
+    The payload is the contract of the containerised stack, so the script that
+    checks it is exercised here against a good and two broken payloads instead of
+    being trusted until the next CI run.
+    """
+
+    @staticmethod
+    def _run(tmp_path: Path, payload: object) -> subprocess.CompletedProcess[str]:
+        target = tmp_path / "ready.json"
+        if isinstance(payload, str):
+            target.write_text(payload, encoding="utf-8")
+        else:
+            target.write_text(json.dumps(payload), encoding="utf-8")
+        return subprocess.run(
+            ["python3", str(SCRIPTS_DIR / "ci_assert_ready.py"), str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_a_ready_stack_passes(self, tmp_path: Path) -> None:
+        result = self._run(
+            tmp_path,
+            {
+                "status": "ready",
+                "environment": "development",
+                "schema_revision": "0001_initial_schema",
+                "components": [
+                    {"name": "postgresql", "status": "ok"},
+                    {"name": "redis", "status": "ok"},
+                ],
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        assert "readiness ok" in result.stdout
+
+    def test_a_degraded_component_fails_with_the_payload(self, tmp_path: Path) -> None:
+        result = self._run(
+            tmp_path,
+            {
+                "status": "degraded",
+                "schema_revision": "0001_initial_schema",
+                "components": [
+                    {"name": "postgresql", "status": "ok"},
+                    {"name": "redis", "status": "unavailable"},
+                ],
+            },
+        )
+        assert result.returncode != 0
+        assert "not ready" in result.stderr
+        assert result.stdout.strip(), "the payload must be printed as evidence"
+        assert "unavailable" in result.stdout and "redis" in result.stdout, result.stdout
+
+    def test_a_missing_payload_fails_with_an_explanation(self, tmp_path: Path) -> None:
+        result = subprocess.run(
+            ["python3", str(SCRIPTS_DIR / "ci_assert_ready.py"), str(tmp_path / "absent.json")],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert "did not answer" in result.stderr
 
 
 class TestCiWorkflowPaths:
