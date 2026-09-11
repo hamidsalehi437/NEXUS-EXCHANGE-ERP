@@ -19,9 +19,7 @@ pytestmark = pytest.mark.integration
 
 
 class TestLoginThrottle:
-    def test_the_login_bucket_is_enforced(
-        self, api_client: TestClient, make_user: object
-    ) -> None:
+    def test_the_login_bucket_is_enforced(self, api_client: TestClient, make_user: object) -> None:
         """The configured number of attempts is allowed; the next one is refused."""
         limit = get_settings().rate_limit_auth_per_5min
         user = make_user(is_active=True)  # type: ignore[operator]
@@ -46,9 +44,7 @@ class TestLoginThrottle:
         assert refused.headers["X-RateLimit-Remaining"] == "0"
         assert int(refused.headers["Retry-After"]) >= 1
 
-    def test_the_bucket_is_per_username(
-        self, api_client: TestClient, make_user: object
-    ) -> None:
+    def test_the_bucket_is_per_username(self, api_client: TestClient, make_user: object) -> None:
         """A shared office address must not let one account throttle another."""
         first = make_user()  # type: ignore[operator]
         second = make_user()  # type: ignore[operator]

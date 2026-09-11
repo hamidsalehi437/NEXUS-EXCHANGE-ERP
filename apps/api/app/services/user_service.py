@@ -169,9 +169,7 @@ class UserService:
                 await self._resolve_roles(RoleRepository(session), role_names, actor=actor)
             except NexusError as error:
                 if isinstance(error, PermissionDeniedError):
-                    await self._record_refusal(
-                        error, actor=actor, attempted_roles=role_names
-                    )
+                    await self._record_refusal(error, actor=actor, attempted_roles=role_names)
                 raise
 
     async def _authorise_permissions(
@@ -379,12 +377,11 @@ class UserService:
         actor: ActorContext,
     ) -> UserProfile:
         """Replace a user's explicit grants/denies (an explicit deny beats a role grant)."""
-        # Denies need no authority beyond users.manage; only grants are checked.
+        # Only *grants* are checked for escalation: a deny removes authority, so refusing
+        # it would block a delegated administrator from suspending a permission they do
+        # not hold themselves. The catalogue check for every code (grants and denies)
+        # happens inside the transaction below, so an unknown code is still a 422.
         grants = sorted({o.permission_code for o in overrides if o.is_granted})
-        denies = sorted({o.permission_code for o in overrides if not o.is_granted})
-        await self._authorise_permissions(
-            [*grants, *denies], actor=actor, path="user_permission_overrides"
-        )
         await self._authorise_permissions(grants, actor=actor, path="user_permission_overrides")
         async with self._database.transaction() as session:
             users = UserRepository(session)

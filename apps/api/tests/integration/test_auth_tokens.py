@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import uuid
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -199,10 +200,13 @@ class TestAccessTokenUse:
 
         # With the override gone the client signs in again and is back to normal.
         relogin = login(api_client, str(user["username"])).json()
-        assert api_client.get(
-            f"{API}/auth/me",
-            headers=bearer(str(relogin["access_token"]), str(relogin["device"]["id"])),
-        ).status_code == 200
+        assert (
+            api_client.get(
+                f"{API}/auth/me",
+                headers=bearer(str(relogin["access_token"]), str(relogin["device"]["id"])),
+            ).status_code
+            == 200
+        )
 
     def test_a_revoked_device_invalidates_its_live_tokens(
         self, api_client: TestClient, make_user: object, main_database: str
@@ -283,10 +287,13 @@ class TestRefreshRotation:
         )
         assert rows == 4  # initial + three rotations
         # and the newest token still works through the API
-        assert api_client.get(
-            f"{API}/auth/me",
-            headers=bearer(str(current["access_token"]), str(current["device"]["id"])),
-        ).status_code == 200
+        assert (
+            api_client.get(
+                f"{API}/auth/me",
+                headers=bearer(str(current["access_token"]), str(current["device"]["id"])),
+            ).status_code
+            == 200
+        )
 
     def test_refresh_is_audited(
         self, api_client: TestClient, make_user: object, main_database: str
@@ -368,6 +375,49 @@ class TestReuseDetection:
             family=first["session_id"],
         )
         assert revoked == 2
+
+    def test_two_concurrent_uses_of_one_token_are_serialised(
+        self, api_client: TestClient, make_user: object, main_database: str
+    ) -> None:
+        """A race on one refresh token cannot mint two sessions (concurrency case).
+
+        Two threads present the same token at the same moment. The row lock makes the
+        rotation serial: exactly one caller wins, the other is handled as a reuse
+        attempt, and reuse detection consequently revokes the winning token too.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        user = make_user()  # type: ignore[operator]
+        session, _, device_uuid = fresh_session(api_client, user)  # type: ignore[arg-type]
+        token = str(session["refresh_token"])
+
+        def present() -> Any:
+            return refresh(api_client, token, device_uuid=device_uuid, expect=None)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = pool.submit(present), pool.submit(present)
+            responses = [first.result(), second.result()]
+
+        assert sorted(response.status_code for response in responses) == [200, 401], [
+            response.text for response in responses
+        ]
+        refused = next(response for response in responses if response.status_code == 401)
+        assert error_code(refused) == "TOKEN_REVOKED"
+
+        # The rotation that won is dead as well: the family was revoked by the reuse.
+        rotated = next(response for response in responses if response.status_code == 200).json()[
+            "refresh_token"
+        ]
+        assert error_code(refresh(api_client, rotated, expect=401)) == "TOKEN_REVOKED"
+        assert (
+            fetch_scalar(
+                main_database,
+                "SELECT count(*) FROM refresh_tokens WHERE family_id = :family "
+                "AND revoked_reason = 'REUSE_DETECTED'",
+                family=session["session_id"],
+            )
+            >= 1
+        )
 
     def test_reuse_is_audited_as_a_security_event(
         self, api_client: TestClient, make_user: object, main_database: str
@@ -552,9 +602,7 @@ class TestSessionManagement:
 
         items = api_client.get(f"{API}/auth/sessions", headers=first_headers).json()["items"]
         assert {item["session_id"] for item in items} == {first_tokens["session_id"]}
-        assert second_tokens["session_id"] not in {
-            item["session_id"] for item in items
-        }
+        assert second_tokens["session_id"] not in {item["session_id"] for item in items}
 
     def test_a_session_can_be_revoked_from_another_device(
         self, api_client: TestClient, make_user: object

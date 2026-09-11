@@ -210,7 +210,12 @@ class TestRolePermissionMatrix:
             str(role): {str(permission) for permission in permissions}
             for role, permissions in ROLE_PERMISSIONS.items()
         }
-        assert stored == expected
+        # Other suites materialise extra test-only roles (the escalation fixtures), so the
+        # contract is "every seeded role is present with exactly its coded grants".
+        missing = sorted(set(expected) - set(stored))
+        assert not missing, f"seeded roles missing from the catalogue: {missing}"
+        for role, permissions in expected.items():
+            assert stored[role] == permissions, f"{role} grants drifted from the code"
 
     def test_the_permission_catalogue_endpoint_lists_the_registry(
         self, api_client: TestClient, admin_headers: dict[str, str]
@@ -316,9 +321,7 @@ class TestPasswordChange:
             assert response.status_code == 422, candidate
             assert error_code(response) == "VALIDATION_ERROR"
 
-    def test_the_new_password_must_differ(
-        self, api_client: TestClient, make_user: object
-    ) -> None:
+    def test_the_new_password_must_differ(self, api_client: TestClient, make_user: object) -> None:
         user = make_user()  # type: ignore[operator]
         body = login(api_client, str(user["username"])).json()
         response = api_client.post(

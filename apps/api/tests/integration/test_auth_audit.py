@@ -289,9 +289,7 @@ class TestAuditCompleteness:
             execute_sql(main_database, "UPDATE audit_logs SET action = 'FORGED'")
         assert "APPEND_ONLY" in str(error.value)
 
-    def test_the_trail_cannot_be_deleted(
-        self, api_client: TestClient, main_database: str
-    ) -> None:
+    def test_the_trail_cannot_be_deleted(self, api_client: TestClient, main_database: str) -> None:
         from sqlalchemy.exc import SQLAlchemyError
 
         from tests.helpers import execute_sql

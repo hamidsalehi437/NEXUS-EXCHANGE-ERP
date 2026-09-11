@@ -2,9 +2,9 @@
 
 | Field | Value |
 | --- | --- |
-| Status | **Phase 1 delivered and verified — pending approval** |
+| Status | **Phase 2 READY FOR REVIEW** — the permanent phase table lives in [`PROJECT_STATUS.md`](PROJECT_STATUS.md) |
 | Last updated | 2026-09-11 |
-| Rule | Each document has an ID, a version and an owner; documents change in the same PR as the behaviour they describe |
+| Rule | Each document has an ID, a version and an owner; documents change in the same PR as the behaviour they describe. Every phase must also commit its report under `docs/phases/` and update `PROJECT_STATUS.md` — the repository, not a chat session, is the record of progress |
 
 ## Reading order
 
@@ -23,6 +23,8 @@
 | 11 | [`architecture/ROADMAP.md`](architecture/ROADMAP.md) | `ARCH-ROAD-001` | Phases 1–13 with exit criteria, risks, MVP mapping |
 | 12 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | `OPS-DEPLOY-001` | How to start, migrate, seed, verify and operate the five-service stack |
 | 13 | [`PHASE1_REPORT.md`](PHASE1_REPORT.md) | `PHASE1-REPORT-001` | Phase 1 verification report: PASS / FAIL / NOT VERIFIED per acceptance criterion |
+| 14 | [`PROJECT_STATUS.md`](PROJECT_STATUS.md) | `PROJECT-STATUS-001` | **Permanent project status**: phase table, reporting rule, environment limitations |
+| 15 | [`phases/PHASE2_REPORT.md`](phases/PHASE2_REPORT.md) | `PHASE2-REPORT-001` | Phase 2 report: authentication, RBAC, users, devices — files, tests, evidence, limitations |
 
 Supporting artifacts:
 
@@ -32,4 +34,13 @@ Supporting artifacts:
 
 ## Phase status in one line
 
-Phase 1 adds the real `apps/api` foundation (FastAPI + Pydantic v2 + SQLAlchemy 2.x), the Alembic initial revision that applies the approved schema verbatim (checksum-verified), the five-service Docker Compose stack, the idempotent seed runner, health/readiness endpoints, the Celery worker, CI, and the unit/integration suites — 499 tests green, both schema gates matching, the Phase 0 invariant suite green on a freshly migrated database. No business endpoint is implemented yet; that is Phase 2.
+Phase 2 adds the real authentication and authorization layer on top of the Phase 1
+foundation: login with Argon2id and device binding, DB-backed lockout, HS256 access tokens
+re-validated against the database on every request, refresh rotation with reuse detection,
+logout/session/device revocation, users/roles/permissions administration with anti-escalation
+guards, audit attribution for every authentication event, and HTTP-surface rate limiting.
+**No schema change was required.** `pytest tests` → **759 passed** (500 Phase 0/1 regression +
+259 new Phase 2 tests), Ruff (`check` + `format --check`) and MyPy clean, both schema gates
+MATCH, and the Phase 0 invariant suite green (52 assertions) on a freshly migrated database.
+No business endpoint is implemented yet; master data starts in Phase 3, which has **not** been started.
+The permanent, reviewable evidence for Phase 2 is [`phases/PHASE2_REPORT.md`](phases/PHASE2_REPORT.md).

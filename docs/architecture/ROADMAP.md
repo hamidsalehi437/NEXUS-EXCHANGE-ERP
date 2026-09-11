@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `ARCH-ROAD-001` |
-| Version | 1.0 (Phase 0) |
-| Status | **Proposed — pending Phase 0 approval** |
+| Version | 1.1 (Phase 2 status recorded) |
+| Status | **Phase 0 approved; Phase 1 delivered; Phase 2 delivered — pending approval** |
 | Rule | A phase starts only when the previous phase's exit criteria are green and its report is delivered (PART 59, PART 61) |
 
 > **خلاصه فارسی** — نقشه راه ۱۳ فاز: هر فاز هدف، خروجی‌های واقعی، تست‌های اجباری و شرط پذیرش دارد. هیچ فازی بدون تست سبز بسته نمی‌شود و کد بدون تست «تمام‌شده» محسوب نمی‌شود. بخش ۴ معیارهای MVP (PART 67) را به فازها نگاشت می‌کند و بخش ۳ ریسک‌های هر فاز با راه‌کار آمده است.
@@ -58,6 +58,11 @@ Sequencing rationale: the ledger (Phase 4) is built **before** any complex UI be
 * **Risks:** no Docker in the current sandbox → deliverable is verified by an operator command and reported honestly as unverified here.
 
 ### Phase 2 — Authentication and RBAC
+
+> **Status: delivered (pending approval).** Implemented and verified in `feat(api): Phase 2`; the
+> phase report is `docs/phases/PHASE2_REPORT.md`, the endpoint/error additions are in
+> `docs/api/API_CONTRACT.md` §2/§2.2/§4/§7, and the control-level description is in
+> `docs/security/SECURITY.md` §2/§3. No schema change was required.
 
 * **Deliverables:** `auth_service`, `user_service`, `device_service`, JWT issue/verify with `jti` revocation, Argon2id hashing + parameter upgrade, refresh rotation families with reuse detection, rate limiting, lockout, device registration/revocation, permission registry and role seeding, `api/v1/{auth,users,roles,devices}.py`.
 * **Tests:** the full §4.1 catalogue, plus the authorization matrix for every role.

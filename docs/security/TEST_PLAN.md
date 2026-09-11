@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `SEC-TEST-001` |
-| Version | 1.0 (Phase 0) |
-| Status | **Proposed — pending Phase 0 approval** |
+| Version | 1.1 (Phase 2 evidence added to §4.1) |
+| Status | **Phase 0 plan approved; Phase 2 evidence executed — 757/757 tests green** |
 | Scope | Backend (Python), Flutter clients, database invariants, security, performance, restore drills |
 
 > **خلاصه فارسی** — برنامه آزمون: هرم تست (واحد، یکپارچه، E2E، تغییرناپذیرها)، ابزارها (pytest، Hypothesis، Drift in-memory، k6)، آزمون‌های الزامی پرامپت (احراز هویت، ارز، حسابداری، صندوق، همگام‌سازی)، ماتریس امنیتی، دروازه‌های CI و شرط «تست‌ها پاس شده‌اند». نتیجه اجرای واقعی فاز صفر (۲۷ ادعای تغییرناپذیری روی PostgreSQL 16.2) نیز در بخش ۳ ثبت شده است.
@@ -61,6 +61,20 @@ This suite becomes part of CI in Phase 1 and must stay green for every subsequen
 | Permission denied | Authenticated cashier calling `POST /exchange/{id}/reverse` → 403 `PERMISSION_DENIED` |
 | Branch scope | Manager of branch A reading branch B data → 403 `FORBIDDEN_SCOPE` / 404 |
 | Password change | Other sessions revoked, audit event written |
+
+**Phase 2 evidence (executed).** Every case above is covered by real tests against PostgreSQL 16.2 + Redis 6.2; `pytest tests` collects **757** tests and all pass.
+
+| File | Tests | Covers |
+| --- | --- | --- |
+| `tests/unit/test_tokens.py` | 30 | JWT claims/expiry/forgery, refresh digest, family linkage |
+| `tests/unit/test_rate_limit.py` | 13 | Bucket arithmetic, headers, fail-closed behaviour |
+| `tests/integration/test_auth_login.py` | 39 | Valid/invalid login, inactive user, lockout, device registration, policy errors |
+| `tests/integration/test_auth_tokens.py` | 43 | Expiry, rotation chains, reuse detection, logout scopes, session revocation |
+| `tests/integration/test_auth_authorization.py` | 33 | Deny sweep, role×endpoint matrix, `must_change_password` gate, `DEVICE_MISMATCH` |
+| `tests/integration/test_users_admin.py` | 51 | User CRUD/soft delete, role assignment, escalation guards, overrides |
+| `tests/integration/test_devices.py` | 23 | Register/list/revoke, duplicates, idempotency, branch scope |
+| `tests/integration/test_auth_rate_limit.py` | 15 | HTTP 429 on login/refresh buckets, header correctness, no audit noise |
+| `tests/integration/test_auth_audit.py` | 10 | Audit completeness, actor attribution, hash chain, append-only enforcement |
 
 ### 4.2 Exchange (Phase 5)
 

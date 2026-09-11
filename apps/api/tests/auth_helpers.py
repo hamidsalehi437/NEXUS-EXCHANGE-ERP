@@ -81,7 +81,10 @@ def login_headers(
 
 
 def refresh(
-    client: TestClient, refresh_token: str, *, device_uuid: uuid.UUID | str | None = None,
+    client: TestClient,
+    refresh_token: str,
+    *,
+    device_uuid: uuid.UUID | str | None = None,
     expect: int | None = 200,
 ) -> Any:
     """POST /auth/refresh with an optional device claim."""

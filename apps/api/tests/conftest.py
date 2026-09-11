@@ -129,11 +129,27 @@ def clear_rate_limits() -> Iterator[None]:
     test to the next: a bucket left behind by an earlier case would turn an unrelated
     login into a ``429``. Only the ``nexus:`` namespace of the test database (15) is
     touched, and the flush happens whether or not a test asks for the fixture by name.
+
+    Jobs that do not run a Redis service (unit tests, the static infrastructure checks,
+    the OpenAPI export) must still be able to run their tests, so an unreachable Redis is
+    tolerated *unless* the suite was pointed at one explicitly through
+    ``NEXUS_TEST_REDIS_URL`` — the integration job always sets it, and there a failure is
+    a real failure that must surface instead of being swallowed.
     """
+
+    import logging
+
     import redis as redis_sync
 
+    explicit_url = os.environ.get("NEXUS_TEST_REDIS_URL")
+
     def _flush() -> None:
-        client = redis_sync.from_url(redis_url(), decode_responses=True)
+        client = redis_sync.from_url(
+            redis_url(),
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=5,
+        )
         try:
             keys = list(client.scan_iter(match="nexus:*", count=500))
             if keys:
@@ -141,9 +157,19 @@ def clear_rate_limits() -> Iterator[None]:
         finally:
             client.close()
 
-    _flush()
+    def _reset() -> None:
+        try:
+            _flush()
+        except redis_sync.RedisError:
+            if explicit_url:
+                raise
+            logging.getLogger("tests").debug(
+                "no Redis reachable; the rate-limit counters were not reset"
+            )
+
+    _reset()
     yield
-    _flush()
+    _reset()
 
 
 @pytest.fixture(scope="session")
@@ -221,9 +247,7 @@ def provisioned_device(api_client: TestClient, admin_headers: dict[str, str], br
     def _provision(platform: str = "WINDOWS") -> str:
         from tests.auth_helpers import register_device
 
-        device = register_device(
-            api_client, admin_headers, branch_id=branch_id, platform=platform
-        )
+        device = register_device(api_client, admin_headers, branch_id=branch_id, platform=platform)
         return str(device["device_uuid"])
 
     return _provision

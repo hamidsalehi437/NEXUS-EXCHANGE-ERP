@@ -224,9 +224,7 @@ class TestUserCreation:
         assert users_in(main_database) == before
 
         # ... and it can create an account with no roles at all, which is inside its set.
-        allowed = api_client.post(
-            USERS, headers=headers, json=create_user_payload(roles=[])
-        )
+        allowed = api_client.post(USERS, headers=headers, json=create_user_payload(roles=[]))
         assert allowed.status_code == 201, allowed.text
 
     def test_the_escalation_attempt_is_audited(
@@ -592,6 +590,44 @@ class TestPermissionOverrides:
         assert "exchange.create" not in codes
         assert "exchange.view" in codes  # the rest of the role is untouched
         assert response.json()["overrides"][0]["reason"] == "Under review"
+
+    def test_a_limited_admin_may_deny_a_permission_it_does_not_hold(
+        self,
+        api_client: TestClient,
+        make_user: object,
+        limited_admin_role: str,
+        provisioned_device: object,
+    ) -> None:
+        """A deny removes authority, so it is not an escalation (regression guard).
+
+        The pre-transaction check must inspect grants only: a help-desk administrator has
+        to be able to suspend a permission it does not hold itself, otherwise least
+        privilege could not be enforced downwards.
+        """
+        helpdesk = make_user(roles=(limited_admin_role,))  # type: ignore[operator]
+        body = login(
+            api_client,
+            str(helpdesk["username"]),
+            device_uuid=uuid.UUID(str(provisioned_device())),
+        ).json()
+        headers = bearer(body["access_token"], body["device"]["id"])
+        target = make_user(roles=("CASHIER",))  # type: ignore[operator]
+
+        response = api_client.put(
+            f"{USERS}/{target['id']}/permissions",
+            headers=headers,
+            json={
+                "overrides": [
+                    {
+                        "permission_code": "exchange.create",
+                        "is_granted": False,
+                        "reason": "Suspended pending review",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert "exchange.create" not in set(response.json()["permissions"])
 
     def test_an_explicit_grant_adds_to_the_role(
         self, api_client: TestClient, admin_headers: dict[str, str], make_user: object

@@ -391,7 +391,14 @@ def require_any_permission(
         if principal.must_change_password:
             raise PermissionDeniedError(
                 "Change your password before using this account.",
-                details={"reason": "PASSWORD_CHANGE_REQUIRED"},
+                details={
+                    "reason": "PASSWORD_CHANGE_REQUIRED",
+                    "allowed_endpoints": [
+                        "/api/v1/auth/password",
+                        "/api/v1/auth/logout",
+                        "/api/v1/auth/me",
+                    ],
+                },
             )
         return principal
 

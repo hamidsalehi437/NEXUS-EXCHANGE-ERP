@@ -305,9 +305,7 @@ class TestDeviceRevocation:
         phone_headers = bearer(phone["access_token"], phone["device"]["id"])
         counter_headers = bearer(counter["access_token"], counter["device"]["id"])
 
-        api_client.post(
-            f"{DEVICES}/{phone['device']['id']}/revoke", headers=admin_headers, json={}
-        )
+        api_client.post(f"{DEVICES}/{phone['device']['id']}/revoke", headers=admin_headers, json={})
         assert api_client.get(f"{API}/auth/me", headers=phone_headers).status_code == 401
         assert api_client.get(f"{API}/auth/me", headers=counter_headers).status_code == 200
 

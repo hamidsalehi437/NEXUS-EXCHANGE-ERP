@@ -1,7 +1,8 @@
 """Redis-backed rate limiting: windows, headers and both failure modes (PART 42, §7).
 
 The limiter is tested against the real Redis test database (15), not a fake, because the
-fixed-window behaviour *is* Redis behaviour (``INCR`` + ``EXPIRE`` + ``TTL``).
+fixed-window behaviour *is* Redis behaviour (``INCR`` + ``EXPIRE`` + ``TTL``). It lives in
+the integration suite for that reason: the CI unit-test job runs without a Redis service.
 """
 
 from __future__ import annotations
@@ -52,9 +53,7 @@ class TestFixedWindow:
             allowed += int(result.allowed)
         assert allowed == 3
 
-    async def test_the_refusal_reports_the_window_and_the_wait(
-        self, limiter: RateLimiter
-    ) -> None:
+    async def test_the_refusal_reports_the_window_and_the_wait(self, limiter: RateLimiter) -> None:
         for _ in range(2):
             await limiter.check("probe:refuse", limit=2, window_seconds=90)
         result = await limiter.check("probe:refuse", limit=2, window_seconds=90)
@@ -96,9 +95,7 @@ class TestFixedWindow:
 
 
 class TestEnforce:
-    async def test_enforce_raises_429_with_the_documented_shape(
-        self, limiter: RateLimiter
-    ) -> None:
+    async def test_enforce_raises_429_with_the_documented_shape(self, limiter: RateLimiter) -> None:
         await limiter.enforce("write:user-1", limit=1, window_seconds=60)
         with pytest.raises(RateLimitedError) as error:
             await limiter.enforce("write:user-1", limit=1, window_seconds=60)

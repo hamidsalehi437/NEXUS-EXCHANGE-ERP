@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `SEC-ARCH-001` |
-| Version | 1.0 (Phase 0) |
-| Status | **Proposed — pending Phase 0 approval** |
+| Version | 1.1 (Phase 2 — implementation notes for §2/§3) |
+| Status | **Phase 0 model approved; Phase 2 controls implemented and tested** (`docs/phases/PHASE2_REPORT.md`) |
 | Owner | Security |
 | Related | `docs/api/API_CONTRACT.md`, `docs/architecture/SYNC_DESIGN.md`, `docs/security/TEST_PLAN.md` |
 
@@ -57,20 +57,29 @@
 | Password hashing | **Argon2id** (`time_cost = 3`, `memory_cost = 64 MiB`, `parallelism = 4`, 16-byte salt, 32-byte output), tuned to ≈150 ms on the reference server; parameters are re-verified on login and the hash is transparently upgraded when policy changes |
 | Password policy | Minimum 12 characters, checked against a common-password blocklist, no forced periodic rotation (NIST SP 800-63B), rotation forced on suspected compromise |
 | Access token | JWT, 15-minute lifetime, claims `sub`, `jti`, `did`, `bid`, `roles`, `iat`, `exp`; `kid` header enables key rotation; `jti` revocation set kept in Redis for logout/kill |
-| Refresh token | 256-bit opaque random value; only its SHA-256 is persisted; lifetime 30 days; bound to a device row |
+| Refresh token | 256-bit opaque random value (`rt_` prefix); only a keyed HMAC-SHA256 digest is persisted (`jwt_refresh_secret` acts as the pepper, so a database dump alone cannot be used to verify guessed tokens); lifetime 30 days; bound to a device row |
 | Rotation & reuse detection | Every refresh consumes the presented token and issues a new one in the same family; a reused token revokes the entire family, raises `SECURITY_REFRESH_REUSE_DETECTED`, and forces re-authentication |
 | Device binding | Login registers/binds a device (`device_uuid`); tokens carry `did`; a token used from another device is rejected (`DEVICE_MISMATCH`) |
 | Login throttling | Per (IP, username) rate limit (10 / 5 min) and per-account lockout after 5 failures (`locked_until`) |
 | MFA | Not in the MVP; the schema and login flow reserve `must_change_password`/future `mfa_secret` handling so it can be added without breaking the contract. Recorded as a known limitation (`ROADMAP.md` §Risks) |
 | Session lifecycle | Logout revokes the refresh family; password change revokes all other sessions; device revocation kills all of that device's sessions immediately |
+| Forced change | New/reset accounts carry `must_change_password`; until the password is changed every permission-guarded endpoint returns `403` with `details.reason = PASSWORD_CHANGE_REQUIRED`, while `/auth/me`, `/auth/logout` and `/auth/password` stay reachable |
+| Authority freshness | User, roles, permissions and device are re-read from PostgreSQL on every request; the access token's `perm_hash` fingerprint is compared with the stored authority and a mismatch is rejected (`401 TOKEN_INVALID`, `details.reason = AUTHORIZATION_CHANGED`) so a role revoked mid-session takes effect immediately instead of at token expiry |
+| Revocation store | Access-token `jti` values are denylisted in Redis for the remainder of their lifetime; if Redis is unreachable, revocation checks fail closed (`503 SERVICE_UNAVAILABLE`) rather than allowing a revoked token |
+| Escalation guards | An administrator may only grant authority they hold themselves: system-role assignment requires the actor to hold that role (`SYSTEM_ROLE_ESCALATION`), any role/permission change that would confer an unheld permission is refused (`PERMISSION_ESCALATION`), and every refusal is audited (`SECURITY_PRIVILEGE_ESCALATION_BLOCKED` with the attempted roles/permissions) |
+| Self-edit guards | A user cannot deactivate or lock out their own account (`details.reason = self_deactivation` / `self_lockout`) and the last active `SUPER_ADMIN` cannot be deactivated |
+| Audit attribution | Authentication events that have a known principal (`AUTH_LOGIN_SUCCEEDED`, `AUTH_REFRESH_ROTATED`, `SECURITY_SESSION_REVOKED`, `AUTH_LOGOUT`, self-service `DEVICE_REGISTERED`, …) are written with `user_id`/`device_id`; only pre-authentication failures (`AUTH_LOGIN_FAILED`, `AUTH_LOGIN_DENIED`, `AUTH_LOCKOUT`, `AUTH_REFRESH_FAILED`, `SECURITY_REFRESH_REUSE_DETECTED`, `DEVICE_REGISTRATION_DENIED`) may be anonymous |
 
 ## 3. Authorization
 
 | Layer | Mechanism |
 | --- | --- |
 | Role-based | Roles `SUPER_ADMIN`, `OWNER`, `MANAGER`, `ACCOUNTANT`, `CASHIER`, `AUDITOR` → permission sets (`role_permissions`) |
-| Explicit per-user | `user_permissions.is_granted = FALSE` (deny) always wins over any role grant; used for suspension and least-privilege scoping |
-| Endpoint enforcement | FastAPI dependency per route (`require("exchange.create")`); **401** for unauthenticated, **403** for authenticated-but-forbidden |
+| Explicit per-user | `user_permissions.is_granted = FALSE` (deny) always wins over any role grant; used for suspension and least-privilege scoping. Overrides are replaced as a set via `PUT /users/{id}/permissions`, so a stale grant cannot linger unnoticed |
+| Endpoint enforcement | FastAPI dependency per route (`require("exchange.create")`); **401** for unauthenticated, **403** for authenticated-but-forbidden. Deny by default: a protected route with no dependency fails closed |
+| Authority freshness | Roles/permissions are re-read from PostgreSQL on every request and compared with the token's `perm_hash`; changes take effect immediately (`401 TOKEN_INVALID`, `details.reason = AUTHORIZATION_CHANGED`) instead of waiting for token expiry |
+| Grant-time control (anti-escalation) | A delegated administrator cannot widen their own authority: assigning a system role they do not hold is refused (`SYSTEM_ROLE_ESCALATION`), and any change conferring a permission the actor lacks is refused (`PERMISSION_ESCALATION`); refusals are audited (`SECURITY_PRIVILEGE_ESCALATION_BLOCKED`) |
+| Forced password change | `must_change_password` accounts may authenticate but every permission-guarded endpoint answers `403 PERMISSION_DENIED` (`details.reason = PASSWORD_CHANGE_REQUIRED`) until the password is rotated |
 | Object-level | Every query is scoped by branch (`FORBIDDEN_SCOPE`, 403) unless the actor holds a group-wide permission; `RESOURCE_NOT_FOUND` is returned instead of leaking cross-branch existence |
 | State-level | Reversal requires `exchange.reverse`, cancellation `exchange.cancel`, approvals `transfers.approve` — separate permissions so one person can be prevented from both creating and reversing |
 | Segregation of duties | Recommended production configuration: the cashier cannot reverse; the accountant cannot create cash movements; the owner's own actions are still audited |
