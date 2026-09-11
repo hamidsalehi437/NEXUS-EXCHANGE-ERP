@@ -9,7 +9,7 @@
 | Branch | `arena/01a090c5-nexus-exchange-erp` |
 | Starting commit | `2c53a78` — "docs: add the Phase 1 verification report" (last Phase 1 commit) |
 | Implementation commit | `f3d4bb6` — "feat(api): Phase 2 — authentication, users, roles, permissions, devices" (45 files, +9,678/−44) |
-| Finalization commit | the commit that introduces this report (code review fixes, documentation pass, this report, `docs/PROJECT_STATUS.md`) |
+| Finalization commit | `9605ea382d3715f96d784699de470b56497680a7` — "docs(phase2): permanent phase report, project status, review and CI fixes" (review fixes, CI fixes, documentation pass, this report, `docs/PROJECT_STATUS.md`); the hash is pinned by the immediately following documentation commit |
 | Pull request | PR #1 against `root` (the remote has no `main` branch) |
 | Next phase | Phase 3 — **NOT STARTED** |
 

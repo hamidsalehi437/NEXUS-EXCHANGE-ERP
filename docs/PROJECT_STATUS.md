@@ -39,6 +39,7 @@ Notes:
 
 * Phases 0–13 are the phases defined by the approved roadmap (`docs/architecture/ROADMAP.md`). Rows 14–17 are reserved placeholders; extending the roadmap requires a documentation change and human approval, and this table is updated at the same time.
 * Phase 2 is **READY FOR REVIEW**, not approved. Only the human reviewer moves a phase to APPROVED, and the approval is recorded in this table.
+* Phase 2 commits: `2c53a78` (start, last Phase 1 commit) → `f3d4bb6` (implementation, 45 files) → `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes).
 * Phase 3 has **not** started and must not start before Phase 2 is approved.
 
 ## 2. Reporting rule for every phase from Phase 2 onward
