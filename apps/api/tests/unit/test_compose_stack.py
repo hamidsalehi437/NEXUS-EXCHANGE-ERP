@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 import yaml
 
+from app.core.config import Settings
 from tests.helpers import REPO_ROOT
 
 pytestmark = pytest.mark.unit
@@ -93,6 +94,34 @@ class TestComposeServices:
 
     def test_exactly_the_five_required_services_are_declared(self, compose: dict[str, Any]) -> None:
         assert set(compose["services"]) == REQUIRED_SERVICES
+
+    def test_only_supported_top_level_keys_are_used(self, compose: dict[str, Any]) -> None:
+        """The structural half of `docker compose config`: the obsolete `version:` key is
+        gone, and everything else is part of the Compose Specification."""
+        allowed = {"name", "services", "volumes", "networks"}
+        extra = {key for key in compose if key not in allowed and not str(key).startswith("x-")}
+        assert extra == set(), f"unsupported top-level keys: {sorted(extra)}"
+        assert "version" not in compose
+
+    def test_every_service_reference_exists(self, compose: dict[str, Any]) -> None:
+        declared = set(compose["services"])
+        for name, definition in compose["services"].items():
+            dependencies = definition.get("depends_on") or {}
+            assert set(dependencies) <= declared, f"{name} depends on an unknown service"
+            for mount in definition.get("volumes", []):
+                source = str(mount).split(":", 1)[0]
+                assert source.startswith((".", "/")) or source in compose["volumes"], mount
+
+    def test_only_supported_interpolation_forms_are_used(self) -> None:
+        """`VAR`, `VAR:-default` and `VAR:?message` — anything else would be a typo."""
+        for line in COMPOSE_FILE.read_text().splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for match in _INTERPOLATION.finditer(line):
+                options = match.group(2) or ""
+                assert options == "" or options.startswith((":-", ":?")), (
+                    f"unsupported interpolation form: ${{{match.group(1)}{options}}}"
+                )
 
     def test_every_service_has_a_healthcheck_restart_policy_and_log_limits(
         self, compose: dict[str, Any]
@@ -264,6 +293,47 @@ class TestEnvironmentWiring:
             value = str(environment[key])
             assert "127.0.0.1" not in value and "localhost" not in value, key
             assert "@postgres:5432" in value or "@redis:6379" in value, key
+
+    def test_the_compose_environment_satisfies_the_settings_validator(
+        self, compose: dict[str, Any]
+    ) -> None:
+        """Render every interpolated value and load the result with the real Settings model.
+
+        A wiring mistake (a wrong driver scheme, a missing required value, a relative
+        path) is a deployment that refuses to start; this catches it without a container.
+        """
+        environment = compose["x-api-environment"]
+        secrets_map = {
+            "POSTGRES_PASSWORD": "probe-postgres-" + "a" * 24,
+            "NEXUS_API_PASSWORD": "probe-api-" + "b" * 28,
+            "NEXUS_MIGRATOR_PASSWORD": "probe-migrator-" + "c" * 24,
+            "REDIS_REQUIRED_PASSWORD": "probe-redis-" + "d" * 25,
+            "JWT_SECRET": "1" * 64,
+            "JWT_REFRESH_SECRET": "2" * 64,
+            "APP_ENV": "development",
+        }
+
+        def replace(match: re.Match[str]) -> str:
+            name, options = match.group(1), match.group(2) or ""
+            if options.startswith(":-"):
+                return secrets_map.get(name, options[2:])
+            assert name in secrets_map, f"no value available for {name}"
+            return secrets_map[name]
+
+        resolved = {
+            key: _INTERPOLATION.sub(replace, str(value)) for key, value in environment.items()
+        }
+        settings = Settings(
+            _env_file=None, **{key.lower(): value for key, value in resolved.items()}
+        )
+
+        # The stack must reach the services by name, in a form the settings accept.
+        assert settings.database_url.startswith("postgresql+asyncpg://nexus_api:")
+        assert settings.database_migration_url.startswith("postgresql+asyncpg://nexus_migrator:")
+        assert settings.migration_dsn_psycopg.startswith("postgresql+psycopg://nexus_migrator:")
+        assert settings.broker_url.endswith("/1")
+        assert settings.result_backend_url.endswith("/2")
+        assert settings.is_production is False
 
     def test_the_runtime_and_migration_roles_are_different(self, compose: dict[str, Any]) -> None:
         """Least privilege: the API never connects as the schema owner (PART 42)."""
