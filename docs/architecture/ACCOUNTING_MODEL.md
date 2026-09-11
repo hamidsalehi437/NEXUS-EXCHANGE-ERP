@@ -206,7 +206,7 @@ ledger balance (per account, currency) = v_account_balances after rebuild_accoun
 net income = Δ(cash) + Δ(inventory at carrying value) − Δ(capital contributions) − Δ(liabilities)
 net income = Σ REVENUE − Σ EXPENSE          (from v_trial_balance)
 ```
-The last two identities are asserted numerically in `apps/api/tests/integration/test_accounting_invariants.py` (Phase 4) using the seeded scenario from `tests/fixtures`.
+The last two identities are asserted numerically in `apps/api/tests/integration/test_accounting_integrity.py` (Phase 4, implemented) against a realistic day built by `apps/api/tests/accounting_helpers.py` — openings in three currencies, two exchanges (one gaining, one losing, one with commission), an expense and an adjustment — so the identities are checked on a ledger that has been *used*, not on an empty one.
 
 ## 9. Rounding, precision and presentation
 
@@ -235,8 +235,121 @@ Each branch posts its own journal entries (`journal_entries.branch_id`). Branch 
 | --- | --- |
 | PART 12 | §3, §7 |
 | PART 20, PART 21 | §6 |
-| PART 22 | §6.7 |
+| PART 22 | §6.7, §13.4 |
+| PART 40 | §13.3 |
 | PART 46 | §6, §7 (only `AccountingService` writes the ledger) |
 | PART 49 | §7, §8 |
 | PART 62 | §9 |
 | PART 63 | §6 (services are the only ledger writers) |
+
+## 13. Phase 4 implementation notes
+
+This section records how the model above is implemented in
+`apps/api/app/services/accounting_service.py`. It is documentation of *deployed*
+behaviour; every claim here is pinned by a test named in
+[`../phases/PHASE4_REPORT.md`](../phases/PHASE4_REPORT.md) §15.
+
+### 13.1 The single writer
+
+`AccountingService` is the only code that inserts into `journal_entries` /
+`journal_lines` (PART 46). Its public surface is exactly the roadmap's:
+`create_journal_entry`, `validate_balanced_entry`, `post_exchange`,
+`post_cash_movement`, `post_expense`, `reverse_journal_entry` / `reverse_transaction`,
+`get_journal_entry`, `list_journal_entries`, `get_account_balance`,
+`get_trial_balance`. Every posting path funnels through one private `_post`, so
+validation, locking, insertion, audit and idempotency cannot diverge between document
+types.
+
+### 13.2 Posting lifecycle (one database transaction)
+
+```
+authorise (permission for the reference type)      → PERMISSION_DENIED (audited)
+assert branch scope (actor's branch, or group-wide) → FORBIDDEN_SCOPE   (audited)
+lock every touched account row, in (account, currency) order
+resolve context (base currency, stored positions, carrying rate)
+validate money (Decimal, exact 10-dp scale, within NUMERIC(30,10) bounds)
+validate the entry (≥ 2 lines, single-sided, debit = credit exactly)
+claim the idempotency key (if the endpoint requires one)
+insert entry + lines (lines sorted the same way the lock was taken)
+write one audit row (JOURNAL_POSTED) carrying the numbers and the rate snapshot
+COMMIT — the deferred balance constraint (NEX02) and the non-negative cash
+         constraint (NEX01) are evaluated here, not earlier
+```
+
+Order matters and is deliberate: the account rows are locked **before** any read that
+the posting depends on (`position()`, the carrying rate). A lock taken after the read it
+protects would let two concurrent transactions both read a pre-transaction position and
+both post a disposal — which is exactly the defect
+`test_accounting_concurrency.py::TestConcurrentDisposals` reproduces.
+
+### 13.3 Idempotency
+
+`POST`-shaped money movements accept `Idempotency-Key` (PART 40). The key is claimed
+inside the ledger transaction and completed with the serialized response, so:
+
+* the same key with the same request body replays the stored response
+  (`Idempotency-Replayed: true`, original status code);
+* the same key with a *different* body is refused `409 IDEMPOTENCY_KEY_REUSED` — a key
+  never silently swallows a different request;
+* a concurrent duplicate gets `409 IDEMPOTENCY_IN_PROGRESS` with `Retry-After`;
+* a failed attempt releases the key (`FAILED` is reclaimable), so a client may retry.
+
+The request fingerprint is built from the *plan* (document type, reference, branch,
+quantized amounts, rates, dates) — never from a Python object graph — so two requests
+that mean the same thing hash the same way regardless of formatting (`70` and `70.00`).
+
+### 13.4 Reversal lifecycle
+
+`reverse_journal_entry` (and `reverse_transaction`, which resolves a document to its
+journal) inserts a **mirror** entry: every account, currency and rate is kept and debit
+is swapped with credit, so the *quantities* return as well as the functional amounts.
+The original is never touched. The reversal carries `reversal_of_id` (a self-FK with
+`ck_journal_entries_no_self_reversal`), a `REVERSAL` reference type pointing at the
+original entry, its own audit row, and it may not be dated before the entry it reverses.
+`ux_journal_entries_reversed_once` makes a second reversal impossible even under
+concurrency, and the service refuses to reverse a reversal.
+
+### 13.5 Branch scope and authorisation
+
+Posting authority is per document type (`POSTING_AUTHORITY`): `EXCHANGE_TRANSACTION` →
+`exchange.create`, `CASH_MOVEMENT` → `cash.create`, `EXPENSE` → `expenses.create`,
+`TRANSFER` → `transfers.create`, `MANUAL_ADJUSTMENT` / `OPENING_BALANCE` →
+`accounts.manage`. Authority and object scope are separate checks: a `MANAGER` holds
+`cash.create` but is still refused another branch's ledger, and a reader outside the
+actor's scope receives **404**, not 403, so the ledger does not leak the existence of
+other branches' entries. Every refusal is audited as `LEDGER_POSTING_DENIED` in its own
+transaction, so it survives the rollback of the request that caused it.
+
+### 13.6 Reports read the immutable table
+
+`get_trial_balance` and `get_account_balance` read `journal_lines` (through
+`v_trial_balance` / `v_account_balances`), never the rebuildable cache, and
+`rebuild_account_balances()` is asserted to be a no-op on a ledger whose cache is
+current. Every response states its `source` so a reader can tell which immutable table
+produced the numbers.
+
+## 14. Rate snapshot — protection review and decision D-4-1
+
+A posting must answer two different questions after the fact: *what rate priced this
+entry?* and *which quote was that rate?* Phase 4 reviewed how each is protected, because
+the prompt asks explicitly whether the rate snapshot/reference needs stronger
+**database-level** protection than the append-only application rules documented in
+Phase 3.
+
+**Decision: no schema change.** The snapshot is already structurally immutable, and the
+one change that sounds stronger — a foreign key from the journal line to the quote row —
+would be weaker. The reasoning:
+
+| Question | Where the answer lives | Protection |
+| --- | --- | --- |
+| What rate priced the entry? | `journal_lines.exchange_rate` — the number is **copied** into the line; `foreign_amount` is a `GENERATED ALWAYS` column derived from it | The line is append-only: `trg_journal_lines_no_update/no_delete` → `P0001 NEXUS_APPEND_ONLY`, plus `REVOKE UPDATE, DELETE` from `nexus_app`. Nothing can re-price it, and no other table can either: `journal_lines` has **no** reference to `exchange_rates` at all |
+| Which quote was it? | `audit_logs.new_data.rate_snapshot` (`rate`, `exchange_rate_id`, `from_currency_id`, `to_currency_id`, `branch_id`, `effective_at`, `source`) plus the per-line `exchange_rate` in `line_detail` | `audit_logs` is append-only and hash-chained (`nexus_forbid_mutation`, `nexus_audit_chain`, `verify_audit_chain()`), and `nexus_app` has no `UPDATE`/`DELETE` on it |
+| Can a later quote change history? | It cannot: `exchange_rates` is deliberately mutable (a quote is a market observation, not money — it carries no append-only trigger), but nothing the ledger stores depends on it | `test_accounting_integrity.py::TestTheRateSnapshotIsProtected::test_re_pricing_every_quote_for_the_pair_cannot_re_price_history` re-prices **every** quote for the pair the entry used and asserts the posted lines are byte-identical |
+| Is the recorded reference resolvable? | `exchange_rate_id` names the quote row | Asserted by `...::test_the_audit_trail_records_the_rate_and_the_quote_behind_it`, which also pins the audit's per-line snapshot against the immutable lines |
+| Could a stronger constraint hurt? | A FK from `journal_lines` to `exchange_rates` would give the quote row veto power over financial history (blocking its own replacement/cleanup) and would imply that the referenced row is authoritative for the amount — while the amount is the copied number. It would also violate the frozen-schema rule for no benefit | Recorded as decision D-4-1 in `../phases/PHASE4_REPORT.md` §13 |
+
+The residual risk is therefore *provenance*, not arithmetic: if a caller posts a rate
+without naming the quote it came from, the audit row records the number but
+`exchange_rate_id` is `NULL`. Phase 5's `POST /exchange` resolves the quote through the
+Phase 3 `RateService` and passes its id, which the service accepts and the audit row
+pins; the parameter exists and is tested today.

@@ -25,7 +25,9 @@ from app.core.exceptions import (
     NexusError,
     ServiceUnavailableError,
     ValidationError,
+    constraint_name_of,
     error_for_sqlstate,
+    sqlstate_of,
 )
 from app.core.logging import get_logger, request_id_var
 
@@ -62,17 +64,6 @@ def _envelope(
     if request_id:
         payload["request_id"] = request_id
     return JSONResponse(status_code=status_code, content=payload, headers=headers or None)
-
-
-def _constraint_name(exc: IntegrityError) -> str | None:
-    """Name of the violated constraint, when the driver exposes it.
-
-    psycopg exposes ``exc.orig.diag``; SQLAlchemy does not type ``orig``, so the
-    attribute is reached defensively and reported as unknown when absent.
-    """
-    original = getattr(exc, "orig", None)
-    diag = getattr(original, "diag", None)
-    return getattr(diag, "constraint_name", None)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -128,14 +119,14 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(IntegrityError)
     async def _integrity_error(_request: Request, exc: IntegrityError) -> JSONResponse:
-        sqlstate = _sqlstate_of(exc)
+        sqlstate = sqlstate_of(exc)
         domain_error = error_for_sqlstate(
             sqlstate, "The request violates a database integrity rule."
         )
         logger.warning(
             "database_integrity_error",
             sqlstate=sqlstate,
-            constraint=_constraint_name(exc),
+            constraint=constraint_name_of(exc),
         )
         return _envelope(
             code=str(domain_error.code),
@@ -156,7 +147,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DBAPIError)
     async def _dbapi_error(_request: Request, exc: DBAPIError) -> JSONResponse:
-        sqlstate = _sqlstate_of(exc)
+        sqlstate = sqlstate_of(exc)
         domain_error = error_for_sqlstate(sqlstate, "The request could not be completed.")
         logger.warning("database_error", sqlstate=sqlstate, error=str(exc))
         return _envelope(
@@ -174,10 +165,3 @@ def register_exception_handlers(app: FastAPI) -> None:
             message="An unexpected error occurred. Quote the request id when reporting it.",
             status_code=500,
         )
-
-
-def _sqlstate_of(exc: Exception) -> str | None:
-    """Extract the PostgreSQL SQLSTATE from a SQLAlchemy exception, if present."""
-    orig = getattr(exc, "orig", None)
-    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
-    return str(sqlstate) if sqlstate else None

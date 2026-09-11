@@ -19,7 +19,9 @@ from app.api.v1 import (
     customers,
     devices,
     health,
+    journal,
     rates,
+    reports,
     roles,
     users,
 )
@@ -35,5 +37,7 @@ api_router.include_router(branches.router)
 api_router.include_router(customers.router)
 api_router.include_router(accounts.router)
 api_router.include_router(rates.router)
+api_router.include_router(journal.router)
+api_router.include_router(reports.router)
 
 __all__ = ["api_router"]

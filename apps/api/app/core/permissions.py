@@ -109,6 +109,19 @@ class RoleName(StrEnum):
     AUDITOR = "AUDITOR"
 
 
+# Roles that act on the business as a whole rather than on one branch.
+#
+# SECURITY.md §3 states the object-level rule — "every query is scoped by branch unless
+# the actor holds a group-wide permission" — and API_CONTRACT §8 annotates each
+# operation with the scope it is granted in. Phase 4 is the first phase where money
+# moves, so the axis becomes concrete here: a `MANAGER` posts to, and reads, their own
+# branch; an `OWNER`/`SUPER_ADMIN` administers every branch. Whether that should become a
+# real `branch.scope_all` *permission* (so it could be delegated individually) is a
+# deliberate open question recorded in PHASE4_REPORT.md; until an approved phase changes
+# the matrix, the two roles that administer the business are the two that see all of it.
+GROUP_WIDE_ROLES: frozenset[str] = frozenset({RoleName.SUPER_ADMIN, RoleName.OWNER})
+
+
 ROLE_DESCRIPTIONS: dict[RoleName, str] = {
     RoleName.SUPER_ADMIN: "System administrator: user/device/settings administration",
     RoleName.OWNER: "Business owner: full operational authority, still fully audited",

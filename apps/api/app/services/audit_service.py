@@ -36,6 +36,11 @@ class ActorContext:
     device_id: uuid.UUID | None = None
     ip_address: str | None = None
     request_id: str | None = None
+    # The branch this actor is bound to (the device's branch). Phase 4's ledger uses it
+    # for scope decisions: an entry may only be posted to, or read from, the actor's own
+    # branch unless the actor holds a global scope role. ``None`` means "not bound to a
+    # branch", which is a *restricted* state, never an unrestricted one.
+    branch_id: uuid.UUID | None = None
     # The actor's effective permissions, carried so administrative services can refuse to
     # grant authority the actor does not hold (see UserService escalation guards).
     permissions: frozenset[str] = frozenset()

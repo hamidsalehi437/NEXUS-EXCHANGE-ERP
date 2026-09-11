@@ -296,20 +296,44 @@ class TestAccountTree:
     def test_the_listing_reports_who_has_children(
         self, api_client: TestClient, admin_headers: dict[str, str]
     ) -> None:
-        parent = create_header(api_client, admin_headers, name="Tree root").json()
-        child = create_account(
-            api_client, admin_headers, parent_id=parent["id"], name="Tree leaf"
-        ).json()
-        rows = api_client.get(ACCOUNTS, params={"limit": 500}, headers=admin_headers).json()[
-            "items"
-        ]
-        by_id = {row["id"]: row for row in rows}
-        assert by_id[parent["id"]]["has_children"] is True
-        assert by_id[child["id"]]["has_children"] is False
-        assert by_id[child["id"]]["parent_id"] == parent["id"]
+        """Two filtered listings, not one global page.
 
-        single = api_client.get(f"{ACCOUNTS}/{parent['id']}", headers=admin_headers).json()
-        assert single["has_children"] is True
+        The session database accumulates the accounts every other suite creates (Phase 4's
+        scenarios alone scaffold a chart each), so a global page cannot be relied on to
+        contain this tree - the original form of this test asserted against
+        ``?limit=500`` and a full run eventually pushed the root past the page. Listing by
+        the parent the test itself created is deterministic *and* a stronger statement:
+        the children reported are exactly this root's child, and the root reports that it
+        has one.
+        """
+        root = create_header(api_client, admin_headers, name="Tree root").json()
+        branch = create_header(
+            api_client, admin_headers, parent_id=root["id"], name="Tree branch"
+        ).json()
+        leaf = create_account(
+            api_client, admin_headers, parent_id=branch["id"], name="Tree leaf"
+        ).json()
+
+        children_of_root = api_client.get(
+            ACCOUNTS, params={"parent_id": root["id"]}, headers=admin_headers
+        ).json()["items"]
+        assert [row["id"] for row in children_of_root] == [branch["id"]]
+        assert children_of_root[0]["has_children"] is True
+        assert children_of_root[0]["parent_id"] == root["id"]
+
+        children_of_branch = api_client.get(
+            ACCOUNTS, params={"parent_id": branch["id"]}, headers=admin_headers
+        ).json()["items"]
+        assert [row["id"] for row in children_of_branch] == [leaf["id"]]
+        assert children_of_branch[0]["has_children"] is False
+        assert children_of_branch[0]["parent_id"] == branch["id"]
+
+        # The detail endpoint agrees with the listing's derived flag, and the root - which
+        # has no parent to filter by - is read directly.
+        single_root = api_client.get(f"{ACCOUNTS}/{root['id']}", headers=admin_headers).json()
+        assert single_root["has_children"] is True
+        single_leaf = api_client.get(f"{ACCOUNTS}/{leaf['id']}", headers=admin_headers).json()
+        assert single_leaf["has_children"] is False
 
 
 class TestAccountIdentity:

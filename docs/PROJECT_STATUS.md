@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.2 |
+| Version | 1.3 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -19,8 +19,8 @@
 | 0 | Architecture (documentation set, executable schema, invariant suite) | **APPROVED** | `docs/architecture/`, `docs/database/`, `docs/api/API_CONTRACT.md`, `docs/security/`, `docs/architecture/SYNC_DESIGN.md` |
 | 1 | Project foundation (API skeleton, initial migration, five-service stack, seeds, CI, tooling) | **APPROVED** | `docs/PHASE1_REPORT.md` |
 | 2 | Authentication, users, roles, permissions, devices | **APPROVED** | `docs/phases/PHASE2_REPORT.md` |
-| 3 | Core master data (currencies, branches, customers, accounts, rates) | **READY FOR REVIEW** | `docs/phases/PHASE3_REPORT.md` |
-| 4 | Accounting engine | NOT STARTED | — |
+| 3 | Core master data (currencies, branches, customers, accounts, rates) | **APPROVED** | `docs/phases/PHASE3_REPORT.md` |
+| 4 | Accounting engine | **READY FOR REVIEW** | `docs/phases/PHASE4_REPORT.md` |
 | 5 | Exchange (buy/sell, commission, receipts, cancel, reverse) | NOT STARTED | — |
 | 6 | Cash (open, in, out, adjustment, close) | NOT STARTED | — |
 | 7 | Reports | NOT STARTED | — |
@@ -38,8 +38,8 @@
 Notes:
 
 * Phases 0–13 are the phases defined by the approved roadmap (`docs/architecture/ROADMAP.md`). Rows 14–17 are reserved placeholders; extending the roadmap requires a documentation change and human approval, and this table is updated at the same time.
-* Phase 1 and Phase 2 are **APPROVED** (the reviewer's decision, recorded here).
-* Phase 3 is **READY FOR REVIEW**, not approved. Only the human reviewer moves a phase to APPROVED, and the approval is recorded in this table.
+* Phase 1, Phase 2 and Phase 3 are **APPROVED** (the reviewer's decision, recorded here).
+* Phase 4 is **READY FOR REVIEW**, not approved. Only the human reviewer moves a phase to APPROVED, and the approval is recorded in this table.
 * Phase 2 commits: `2c53a78` (start, last Phase 1 commit) → `f3d4bb6` (implementation, 45 files) →
   `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes) → `58eada2` (hash pin) →
   `19468d2` (CI reference-path fix, defect 13) → `0a45154` (CI check-annotation reporter) →
@@ -70,7 +70,34 @@ Notes:
   approved RBAC split made explicit in the report, Limitation L-8); every rate publication
   produces an audit row; `currencies.code` has no edit path (schema, service and `NEX06`
   trigger). Full regression: **905 passed**.
-* Phase 4 (accounting engine) has **not** started and must not start before Phase 3 is approved.
+* Phase 4 commits: `3a985fd` (start, last Phase 3 commit — *docs(phase3): pin the implementation
+  commit and record the green CI runs*) → the **implementation commit** on branch
+  `arena/01a090c5-nexus-exchange-erp` (`feat(accounting): complete phase 4 double-entry engine`;
+  33 files, +12 033/−61 — 16 production/tooling, 11 test and 6 documentation files, including
+  `docs/phases/PHASE4_REPORT.md`) → the **finalisation commit** (documentation only) that pins
+  that hash and records the Phase 4 CI runs, at the top of the branch and visible in `git log`.
+* Phase 4 verification on the implementation commit: `pytest tests -q` → **1148 passed**
+  (0 failed, 0 skipped) in 165.04 s and again in 172.38 s on the committed tree; `ruff check .` → clean, `ruff format --check .` → 135 files
+  already formatted; `mypy app seeds scripts` → no issues in 89 source files; fresh-database
+  migration (`0001` → `0002_runtime_schema_revision`, head), ORM/schema gate MATCH (31 tables,
+  341 columns) and schema/schema gate MATCH (31 tables, 72 indexes, 71 checks, 48 triggers,
+  23 routines, 5 views); Phase 0 invariant suite on a fresh migrated database → ALL ASSERTIONS
+  PASSED (53 PASS lines); seeds idempotent (89 / 88 / 88); `docs/database/schema.sql`
+  sha256 `37f7bc3c…` unchanged against `CHECKSUMS.txt`.
+* Phase 4 needed **no migration**: every table, constraint, index, grant and function the double-entry
+  engine uses already exists in the approved Phase 0 schema, so `docs/database/schema.sql` and head
+  revision `0002_runtime_schema_revision` are unchanged. The rate-snapshot question raised by the
+  phase brief was reviewed explicitly (decision `D-4-1`, `docs/architecture/ACCOUNTING_MODEL.md`
+  §14) and answered **no schema change**, with regression tests proving that re-pricing a quote
+  cannot move posted history.
+* Phase 4 defects: `D4-1` … `D4-9` (product and test defects found while building the engine),
+  plus `D4-10` and `D4-11` (two order-dependent harness defects the full regressions exposed — a
+  currency-code collision and a global `?limit=500` page lookup). Each was fixed in code or in the
+  harness; no assertion was weakened and no test was skipped or xfailed
+  (`docs/phases/PHASE4_REPORT.md` §24). Complete regression of Phases 0–3: **1148 passed, 0 failed**.
+* Phase 5 (exchange routes) has **not** started: no Phase 5 code, route, migration or test exists,
+  and nothing in Phase 4 presumes it beyond the `AccountingService` surface the roadmap assigns to
+  Phase 4.
 
 ## 2. Reporting rule for every phase from Phase 2 onward
 
@@ -98,3 +125,4 @@ Each phase must, before it is declared complete:
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
 | 1.1 | 2026-09-12 | Phase 2 marked **APPROVED**; Phase 3 marked **READY FOR REVIEW** with `docs/phases/PHASE3_REPORT.md`; Phase 3 commit chain and the "no migration needed" note added; Phase 4–17 remain NOT STARTED |
 | 1.2 | 2026-09-12 | Phase 3 finalisation: the implementation commit pinned as `db85e21` with its exact diff stat and the full verification results (905 passed / ruff / mypy / migration / gates / Phase 0 invariants / seeds); the Phase 3 CI runs `34645985626` and `34645990882` recorded in the environment table. Phase 3 stays **READY FOR REVIEW** (not approved) and Phase 4–17 stay **NOT STARTED** |
+| 1.3 | 2026-09-12 | Phase 3 marked **APPROVED**; Phase 4 marked **READY FOR REVIEW** with `docs/phases/PHASE4_REPORT.md`; Phase 4 commit chain, exact diff stat, full verification results (1148 passed / ruff / mypy / migration / both schema gates / Phase 0 invariants / seeds) and the no-migration + rate-snapshot decision recorded. Phase 4 stays **READY FOR REVIEW** (not approved) and Phase 5–17 stay **NOT STARTED** |

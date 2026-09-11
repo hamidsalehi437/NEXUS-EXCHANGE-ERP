@@ -25,12 +25,17 @@ RATES = f"{API}/rates"
 
 
 # A currency code the seeded catalogue does not contain, so tests never depend on the
-# seed's exact contents. The database pattern is ^[A-Z]{3,10}$; four random letters after
-# the leading "T" give 456 976 combinations per run, which is why the suites never collide
-# with each other or with the seven seeded codes.
+# seed's exact contents. The database pattern is ^[A-Z]{3,10}$: a leading "T" (no seeded
+# code starts with it) plus eight random letters is 26^8 = 208 827 064 576 codes.
+#
+# The earlier four-letter form (26^4 = 456 976) claimed the suites "never collide", and
+# that claim was wrong: with roughly 25 codes drawn per session the birthday probability is
+# ~0.07 %, and a full Phase 4 run did fail with `409 DUPLICATE_RESOURCE` on a freshly drawn
+# code (defect D4-10 in docs/phases/PHASE4_REPORT.md). The space was widened — not the
+# assertion loosened — so a drawn code stays unique by construction.
 def unique_currency_code() -> str:
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    drawn = [letters[(uuid.uuid4().int >> (5 * index)) % 26] for index in range(4)]
+    drawn = [letters[(uuid.uuid4().int >> (5 * index)) % 26] for index in range(8)]
     return "T" + "".join(drawn)
 
 

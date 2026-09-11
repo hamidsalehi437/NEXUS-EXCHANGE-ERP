@@ -57,6 +57,17 @@ class AuditAction(StrEnum):
     ACCOUNT_UPDATED = "ACCOUNT_UPDATED"
     RATE_CREATED = "RATE_CREATED"
 
+    # --- accounting engine (Phase 4) ----------------------------------------
+    # A posted journal is the record of a movement of money; its audit row is what makes
+    # the movement attributable, so posting and reversal are the only two ledger actions
+    # that exist. There is deliberately no "JOURNAL_UPDATED" or "JOURNAL_DELETED".
+    JOURNAL_POSTED = "JOURNAL_POSTED"
+    JOURNAL_REVERSED = "JOURNAL_REVERSED"
+    # A posting attempt refused before anything was written (missing authority, wrong
+    # branch). The refusal is persisted in its own transaction, so it survives the
+    # rollback of the request that caused it.
+    LEDGER_POSTING_DENIED = "LEDGER_POSTING_DENIED"
+
 
 # Actions that must never be attributed to "nobody": a failed login for an unknown
 # username has no user row, so the actor is null — every other entry names a user.

@@ -171,6 +171,7 @@ Every non-2xx response:
 | `DUPLICATE_RESOURCE` | 409 | Unique natural key already exists (currency code, username, customer code) |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | Same `Idempotency-Key` with a different request body |
 | `IDEMPOTENCY_IN_PROGRESS` | 409 | Original request still executing |
+| `IDEMPOTENCY_KEY_REQUIRED` | 400 | A money-moving endpoint was called without an `Idempotency-Key` header (PART 40) |
 | `INSUFFICIENT_BALANCE` | 409 | Ledger/cash position would go negative (`NEX01`) |
 | `JOURNAL_UNBALANCED` | 500 | Defect: unbalanced entry rejected by the database (`NEX02`) |
 | `INVALID_STATUS_TRANSITION` | 409 | Illegal state move (`NEX03`) |
@@ -197,6 +198,7 @@ Every non-2xx response:
 | `CURSOR_EXPIRED` | 410 | Sync cursor older than `change_log` retention |
 | `SYNC_EVENT_REJECTED` | 422 | Event envelope/payload invalid |
 | `RATE_LIMITED` | 429 | Bucket exhausted (`Retry-After` set) |
+| `DATA_INTEGRITY_ERROR` | 422 | A driver-level integrity failure that maps to no named constraint |
 | `INTERNAL_ERROR` | 500 | Unhandled defect; `request_id` is the support handle |
 | `SERVICE_UNAVAILABLE` | 503 | Database/Redis outage; `Retry-After` set |
 
@@ -272,6 +274,14 @@ Roles: `SUPER_ADMIN`, `OWNER`, `MANAGER`, `ACCOUNTANT`, `CASHIER`, `AUDITOR`.
 
 ## 9. Endpoints
 
+> **Implementation status (Phase 4).** The ledger-facing endpoints below are live: `GET /journal`,
+> `GET /journal/{id}` and `GET /reports/trial-balance`. The document endpoints
+> (`/exchange`, `/cash`, `/expenses`, `/transfers`) are listed here because the contract is the
+> contract; their routes arrive with their phases (5, 6, 10). The posting *service* those routes
+> will call — `AccountingService.post_exchange`, `post_cash_movement`, `post_expense` — is
+> implemented and tested in Phase 4, which is what keeps the journal, the balance and the trial
+> balance real today.
+
 ### 9.1 Users, roles, branches, devices
 
 | Method | Path | Permission | Notes |
@@ -309,8 +319,8 @@ Roles: `SUPER_ADMIN`, `OWNER`, `MANAGER`, `ACCOUNTANT`, `CASHIER`, `AUDITOR`.
 | `GET` | `/accounts` | `accounts.manage` | Chart of accounts (tree via `parent_id`); each row carries `has_children` and `currency_code` |
 | `POST` | `/accounts` | `accounts.manage` | Create account; `normal_balance` derived from `account_type` |
 | `PATCH` | `/accounts/{id}` | `accounts.manage` | Name/parent/active only; never `code`, never `account_type` after postings |
-| `GET` | `/journal` | `reports.view` | Entry list with filters (`reference_type`, `reference_id`, `from`, `to`, `branch_id`) |
-| `GET` | `/journal/{id}` | `reports.view` | Entry with lines, totals, reversal linkage |
+| `GET` | `/journal` | `reports.view` | Entry list with filters (`reference_type`, `reference_id`, `from`, `to`, `branch_id`, `limit`, `offset`; newest first, `total` in the envelope). **Implemented in Phase 4** |
+| `GET` | `/journal/{id}` | `reports.view` | Entry with lines, totals, reversal linkage; outside the caller's branch the answer is `404`, never `403`. **Implemented in Phase 4** |
 | `GET` | `/expenses` / `POST /expenses` | `expenses.create` | `POST` posts journal + cash movement; `Idempotency-Key` required |
 | `POST` | `/expenses/{id}/cancel` | `expenses.create` | Posts a reversal entry; the expense row is never deleted |
 
@@ -421,7 +431,7 @@ All report endpoints accept `from`, `to` (ISO dates, branch-local when `branch_i
 | `GET /reports/exchange` | Transactions grouped by pair/type/cashier with rates and margins |
 | `GET /reports/customers` | Volume per customer, last activity, outstanding balances |
 | `GET /reports/transfers` | Lifecycle funnel (created/approved/paid/cancelled), fees, ageing |
-| `GET /reports/trial-balance` | `v_trial_balance` per account/currency with Σdebit = Σcredit assertion |
+| `GET /reports/trial-balance` | `v_trial_balance` per account/currency with Σdebit = Σcredit assertion. **Implemented in Phase 4**: flat `{source, generated_at, filters, total_debit, total_credit, difference, is_balanced, rows[]}`, each row carrying `net_debit` for the account's normal-balance direction |
 | `GET /reports/general-ledger` | Journal lines per account with running balance and document links |
 
 Every report response carries `"source": "journal_lines" | "cash_movements" | "exchange_transactions"` so a reader always knows which immutable table produced it, plus `"generated_at"` and `"filters"`.

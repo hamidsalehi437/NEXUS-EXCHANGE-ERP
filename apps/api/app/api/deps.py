@@ -331,6 +331,7 @@ def actor_context(
         request_id=request_id,
         permissions=principal.permissions,
         roles=principal.roles,
+        branch_id=principal.branch_id,
     )
 
 

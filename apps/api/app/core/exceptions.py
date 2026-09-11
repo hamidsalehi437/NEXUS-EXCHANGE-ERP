@@ -283,6 +283,20 @@ class ReversalError(NexusError):
     default_message = "The reversal request is not valid."
 
 
+class CashCounterAccountRequiredError(NexusError):
+    """A cash movement without a counter account: cash cannot appear from nowhere.
+
+    ``ACCOUNTING_MODEL.md`` §6.4 requires an explicit ``source_account_id`` /
+    ``target_account_id`` for every ``IN``/``OUT`` movement, which is why this refusal has
+    its own code instead of a generic validation error: the operator has to be told which
+    field is missing.
+    """
+
+    code = ErrorCode.CASH_COUNTER_ACCOUNT_REQUIRED
+    http_status = 422
+    default_message = "A cash movement needs the counter account it moves value from or to."
+
+
 class AlreadyReversedError(NexusError):
     code = ErrorCode.ALREADY_REVERSED
     http_status = 409
@@ -299,6 +313,35 @@ class AppendOnlyViolationError(NexusError):
     code = ErrorCode.APPEND_ONLY_VIOLATION
     http_status = 403
     default_message = "This record is append-only and cannot be modified or deleted."
+
+
+# --- Idempotency (PART 40) ----------------------------------------------------
+class IdempotencyKeyReusedError(NexusError):
+    """The key is already bound to a different request body.
+
+    Answering with the stored response would silently drop the new request, and posting
+    it would break the promise the key makes — so the caller is told to use a new key.
+    """
+
+    code = ErrorCode.IDEMPOTENCY_KEY_REUSED
+    http_status = 409
+    default_message = "This Idempotency-Key was already used with a different request."
+
+
+class IdempotencyInProgressError(NexusError):
+    """Another attempt with this key has not finished yet."""
+
+    code = ErrorCode.IDEMPOTENCY_IN_PROGRESS
+    http_status = 409
+    default_message = "This Idempotency-Key is already being processed."
+
+
+class IdempotencyKeyRequiredError(NexusError):
+    """A money-moving endpoint was called without an ``Idempotency-Key``."""
+
+    code = ErrorCode.IDEMPOTENCY_KEY_REQUIRED
+    http_status = 400
+    default_message = "This endpoint requires an Idempotency-Key header."
 
 
 class CashReconciliationIncompleteError(NexusError):
@@ -333,6 +376,40 @@ _SQLSTATE_MAP: dict[str, type[NexusError]] = {
 
 # SQLSTATEs that mean "the same insertion already happened" for offline replay.
 DUPLICATE_SQLSTATES = frozenset({"23505", "23P01"})
+
+
+# The SQLSTATEs this application knows how to name. Callers that must *not* swallow an
+# unrecognised database failure (a service translating its own transaction's refusal, for
+# example) check membership here instead of guessing at the map's contents.
+KNOWN_SQLSTATES: frozenset[str] = frozenset(_SQLSTATE_MAP)
+
+
+def sqlstate_of(exc: BaseException) -> str | None:
+    """The PostgreSQL SQLSTATE carried by a SQLAlchemy exception, when it has one.
+
+    The attribute lives on the driver's exception (``sqlstate`` for asyncpg, ``pgcode``
+    for psycopg), which SQLAlchemy exposes as ``orig`` and does not type — so it is
+    reached defensively and reported as absent rather than guessed.
+    """
+    original = getattr(exc, "orig", None)
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    return str(sqlstate) if sqlstate else None
+
+
+def constraint_name_of(exc: BaseException) -> str | None:
+    """The name of the violated constraint, when the driver exposes it.
+
+    asyncpg puts it on the exception itself; psycopg puts it in ``diag``. Both are
+    checked because the same service runs under either driver (the API uses asyncpg, the
+    Alembic path uses psycopg).
+    """
+    original = getattr(exc, "orig", None)
+    direct = getattr(original, "constraint_name", None)
+    if direct:
+        return str(direct)
+    diagnostic = getattr(original, "diag", None)
+    named = getattr(diagnostic, "constraint_name", None)
+    return str(named) if named else None
 
 
 def error_for_sqlstate(
