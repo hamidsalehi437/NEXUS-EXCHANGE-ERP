@@ -39,7 +39,10 @@ Notes:
 
 * Phases 0–13 are the phases defined by the approved roadmap (`docs/architecture/ROADMAP.md`). Rows 14–17 are reserved placeholders; extending the roadmap requires a documentation change and human approval, and this table is updated at the same time.
 * Phase 2 is **READY FOR REVIEW**, not approved. Only the human reviewer moves a phase to APPROVED, and the approval is recorded in this table.
-* Phase 2 commits: `2c53a78` (start, last Phase 1 commit) → `f3d4bb6` (implementation, 45 files) → `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes).
+* Phase 2 commits: `2c53a78` (start, last Phase 1 commit) → `f3d4bb6` (implementation, 45 files) →
+  `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes) → `58eada2` (hash pin) →
+  `19468d2` (CI reference-path fix, defect 13) → `0a45154` (CI check-annotation reporter) →
+  the commit that carries the defect-14 environment fix and this report's revision.
 * Phase 3 has **not** started and must not start before Phase 2 is approved.
 
 ## 2. Reporting rule for every phase from Phase 2 onward
@@ -56,8 +59,8 @@ Each phase must, before it is declared complete:
 
 | Limitation | Impact | Status |
 | --- | --- | --- |
-| No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here | Unverified here; reported per phase |
-| GitHub Actions not executed from the sandbox | CI results are reported as NOT VERIFIED; the workflow file is reviewed statically | Unverified here |
+| No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seed, login through nginx) and its step conclusions are the evidence | Verified through CI steps |
+| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | Read back per phase |
 | Python 3.11.2 (system interpreter) instead of 3.12 | Runtime differs from the target interpreter; dependency set and code target 3.12 | Known; documented per phase |
 | No command-line `redis-cli`/`psql` on `PATH` | Verification uses the driver-level scripts (`scripts/schema_gate.py`, `tests/invariants/*.sql` executed through psycopg) | Worked around |
 

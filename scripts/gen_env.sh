@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import hashlib
 import pathlib
+import re
 import secrets
 import string
 import sys
@@ -110,6 +111,20 @@ for line in TEMPLATE.read_text().splitlines():
 missing = sorted(set(values) - applied)
 if missing:
     raise SystemExit(f"template is missing required keys: {', '.join(missing)}")
+
+# A line like ``KEY=   # note`` is read by docker compose as the value "# note" for an
+# empty key: the parser strips an inline comment only after a non-empty value. That
+# turned the "leave the development admin password empty" placeholder into a password
+# and satisfied the production backup-recipient check with a comment. Refuse to render
+# such a file instead of writing one that means something different in a container.
+ambiguous = [
+    (number, line)
+    for number, line in enumerate(lines, start=1)
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\s*#", line)
+]
+if ambiguous:
+    rendered = "; ".join(f"line {number}: {line.strip()!r}" for number, line in ambiguous)
+    raise SystemExit(f"a trailing comment on an empty value is read as the value: {rendered}")
 
 TARGET.write_text("\n".join(lines) + "\n")
 TARGET.chmod(0o600)

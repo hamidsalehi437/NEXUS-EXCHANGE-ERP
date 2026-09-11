@@ -58,7 +58,12 @@ endpoint, and any change to the approved accounting invariants or the Phase 0 sc
 | --- | --- |
 | `2c53a78` | Phase 1 tip = Phase 2 starting point |
 | `f3d4bb6` | Phase 2 implementation: 45 files, 9,678 insertions, 44 deletions |
-| finalization commit | Review fixes (`set_permission_overrides` grants-only pre-check, `require_any_permission` details), CI/test-placement fixes (Redis-independent unit job, `ruff format`), documentation pass, this report, `docs/PROJECT_STATUS.md`, `docs/README.md` index update |
+| `9605ea3` | Report, review fixes (`set_permission_overrides` grants-only pre-check, `require_any_permission` details), CI/test-placement fixes (Redis-independent unit job, `ruff format`), documentation pass, this report, `docs/PROJECT_STATUS.md`, `docs/README.md` index update (19 files, +810/−72) |
+| `58eada2` | Pins the report's finalization commit hash |
+| `19468d2` | CI defect 13: both `psql` gates resolve their reference file from `$(git rev-parse --show-toplevel)`; `TestCiWorkflowPaths` guards step paths |
+| `0a45154` | CI diagnostics: `scripts/ci_exec_report.sh` streams a failing stack command's output into a check annotation, so a red step is diagnosable even when the job log is not retrievable |
+| the commit that contains this revision | CI defect 14: `.env.example` no longer places a trailing comment on an empty value (both affected keys), `scripts/gen_env.sh` refuses to render such a file, `TestGeneratedEnvironment` locks it down, and the compose job now seeds the development administrator and logs in through nginx |
+| following commit | Pins this report's final commit hash and records the CI conclusions of that exact run |
 
 ## 3. Files created / modified
 
@@ -90,6 +95,13 @@ Finalization commit:
   `docs/architecture/ROADMAP.md`, `docs/security/SECURITY.md`, `docs/security/TEST_PLAN.md`
 * Moved: `apps/api/tests/unit/test_rate_limit.py` → `apps/api/tests/integration/test_rate_limit.py`
 * Created: `docs/phases/PHASE2_REPORT.md`, `docs/PROJECT_STATUS.md`
+
+CI-fix commits (defects 13, 14 in §14):
+
+* Created: `scripts/ci_exec_report.sh` (check-annotation reporter for failing stack commands)
+* Modified: `.github/workflows/ci.yml`, `.env.example`, `scripts/gen_env.sh`,
+  `apps/api/tests/unit/test_compose_stack.py` (3 guard classes: workflow paths, wrapper
+  usage, generated-environment contract), `docs/{README.md,PROJECT_STATUS.md}` and this report
 
 ## 4. Features implemented
 
@@ -299,9 +311,10 @@ rolls back.
 | 8 | `set_permission_overrides` pre-checked escalation over **denies** as well as grants, so a delegated administrator was refused when suspending a permission they did not hold (contradicting the documented rule that a deny removes authority) | Review of the Phase 2 control flow; regression test added | The pre-check now inspects grants only; the in-transaction catalogue check still validates every code (unknown → `422`). Regression test `test_a_limited_admin_may_deny_a_permission_it_does_not_hold` |
 | 9 | `require_any_permission` omitted `allowed_endpoints` from the `PASSWORD_CHANGE_REQUIRED` details, so a client could not discover the reachable endpoints | Consistency review against `require_permission` | Both dependencies now return the same details |
 | 10 | The autouse `clear_rate_limits` fixture required a live Redis for **every** test, so the CI unit-test job (no Redis service) and the compose job's static infrastructure step failed | GitHub Actions results, cross-checked against the Phase 1 run | The fixture tolerates an unreachable Redis unless `NEXUS_TEST_REDIS_URL` is set explicitly; the Redis-backed limiter tests moved from `tests/unit/` to `tests/integration/` |
-| 11 | Ten Phase 2 files were not `ruff format` clean, failing the CI lint job | GitHub Actions lint job + local `ruff format --check` | `ruff format .` applied; the gate now reports 100 files already formatted |
+| 11 | Ten Phase 2 files were not `ruff format` clean, failing the CI lint job | GitHub Actions lint job + local `ruff format --check` | `ruff format .` applied; the gate now reports 116 files already formatted |
 | 12 | The CI integration job could never reach its migration/schema-gate/Phase 0 steps: those commands load `Settings`, which requires `JWT_SECRET`/`JWT_REFRESH_SECRET` (a pre-existing Phase 1 defect, visible on Phase 1 runs too) | Step-level CI analysis (`Migration on a clean database` failed, tests passed) | Job-level `APP_ENV`/`JWT_SECRET`/`JWT_REFRESH_SECRET` (CI-only values) added to the integration job; the seed idempotency expectations were updated from 88/87 to 89/88 rows after seed 005 |
 | 13 | Two CI steps read reference files through paths that do not exist from their working directory (`-f ../docs/database/schema.sql` and `-f ../tests/invariants/phase0_schema_invariants.sql` in a step that runs in `apps/api` resolve to `apps/docs/...` and `apps/tests/...`), so the `db-db` schema gate and the Phase 0 step could never run in CI | Step-level analysis of the CI runs; reproduced locally with the real `psql` binary (`No such file or directory`) | Both steps resolve the path from `$(git rev-parse --show-toplevel)`; two new static tests (`TestCiWorkflowPaths`) assert that every `working-directory` exists and that every `-f <file>` a step reads resolves to a real file |
+| 14 | `docker compose exec api python -m seeds` failed in CI while `alembic upgrade head` succeeded in the same container. Root cause: `.env.example` carried `DEV_ADMIN_PASSWORD=                 # leave empty to skip seeding an admin account`, and Docker Compose strips an inline comment only when it follows a **non-empty** value — the container received the comment text as the password, which the password policy correctly rejected. The identical pattern on `BACKUP_ENCRYPTION_RECIPIENT=        # age/GPG recipient...` was worse: it satisfied the production "encrypted backups required" validation with a string that is not a recipient | The compose job's failing step could not be diagnosed the first time it failed because job logs are not retrievable here; a check-annotation reporter (`scripts/ci_exec_report.sh`, `0a45154`) was added, and its annotation carried the exact error on the next run (reproduced locally as well: the same value exits 1 with `DEV_ADMIN_PASSWORD rejected by the password policy`) | Both comments moved to their own lines in `.env.example`; `scripts/gen_env.sh` refuses to render a file where an empty value is followed by a comment; `TestGeneratedEnvironment` (3 tests) asserts the template never contains that shape, that the generated `.env` parses to the documented empty values, and that the generator rejects an ambiguous template |
 
 Test-side issues found and corrected while writing the suites (kept here because they
 explain the final test shape): the locked account blocks the login bucket before the bucket
@@ -318,11 +331,11 @@ Python 3.11.2 with the pinned dependency set) from `apps/api`.
 
 | # | Command | Result |
 | --- | --- | --- |
-| 1 | `PYTHONPATH=. NEXUS_TEST_REDIS_URL="redis://:nexuslocaldev@127.0.0.1:6379/15" python -m pytest tests -q` | **761 passed** in 104.97 s |
-| 2 | `PYTHONPATH=. python -m pytest tests/unit -q` (no Redis, CI unit-job shape) | **435 passed** in 1.72 s |
-| 3 | `PYTHONPATH=. python -m pytest tests/unit/test_compose_stack.py -q` (no Redis, CI static-infrastructure shape) | **55 passed** in 0.21 s |
+| 1 | `PYTHONPATH=. NEXUS_TEST_REDIS_URL="redis://:nexuslocaldev@127.0.0.1:6379/15" python -m pytest tests -q` | **765 passed** in 97.82 s |
+| 2 | `PYTHONPATH=. python -m pytest tests/unit -q` (no Redis, CI unit-job shape) | **439 passed** in 1.51 s |
+| 3 | `PYTHONPATH=. python -m pytest tests/unit/test_compose_stack.py -q` (no Redis, CI static-infrastructure shape) | **61 passed** in 0.43 s |
 | 4 | `python -m ruff check .` | All checks passed |
-| 5 | `python -m ruff format --check .` | 100 files already formatted |
+| 5 | `python -m ruff format --check .` | 116 files already formatted |
 | 6 | `python -m mypy app seeds scripts` | Success: no issues found in 70 source files |
 | 7 | `python -m scripts.schema_gate orm-db` | tables 31, columns 341 → **MATCH** |
 | 8 | `python -m scripts.schema_gate db-db --left <schema.sql DB> --right <migrated DB>` | tables 31, indexes 72, checks 71, triggers 48, routines 23, views 5 → **MATCH** |
@@ -357,11 +370,11 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
 
 ## 16. Regression results
 
-* Full suite: **761 passed, 0 failed** (500 Phase 0/1 tests including the updated seed
-  expectations + 261 new Phase 2 tests).
+* Full suite: **765 passed, 0 failed** (500 Phase 0/1 tests including the updated seed
+  expectations + 265 new Phase 2 tests).
 * Phase 1 areas re-verified unchanged: health/readiness/version (18 tests), migration and
   seeds (34 tests), schema gates (19 tests), Phase 0 invariants through the API-level suite
-  (15 tests), compose specification checks (55 tests), configuration validation (60 tests),
+  (15 tests), compose specification checks (61 tests), configuration validation (60 tests),
   exceptions (72 tests), money (42 tests), permissions (83 tests), password/security (56
   tests), logging (15 tests), worker (31 tests).
 * No Phase 1 test was deleted or weakened. One assertion was *narrowed* to remain true in
@@ -374,7 +387,7 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
 | Gate | Command | Result |
 | --- | --- | --- |
 | Ruff lint | `python -m ruff check .` (from `apps/api`) | **PASS** — All checks passed |
-| Ruff format | `python -m ruff format --check .` | **PASS** — 100 files already formatted |
+| Ruff format | `python -m ruff format --check .` | **PASS** — 116 files already formatted |
 | MyPy | `python -m mypy app seeds scripts` | **PASS** — Success, 70 source files |
 | ORM/schema parity | `python -m scripts.schema_gate orm-db` | **PASS** — 31 tables / 341 columns MATCH |
 | Migration/schema verification | `alembic upgrade head` + `db-db` gate | **PASS** — `0001_initial_schema`; reference `schema.sql` vs migrated database: 31 tables / 72 indexes / 71 checks / 48 triggers / 23 routines / 5 views MATCH |
@@ -383,10 +396,16 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
 ## 18. Known limitations
 
 1. **Docker / compose stack** — no Docker CLI in this environment, so
-   `docker compose up -d`, image builds and the nginx/worker acceptance steps could not be
-   executed here. The workflow's compose job is the only place that can prove them; in CI
-   it still fails at the `Migrate and seed through the running stack` step (unchanged from
-   Phase 1). Reported as **NOT VERIFIED**.
+   `docker compose up -d`, image builds and the nginx/worker acceptance steps cannot be
+   executed here. The workflow's compose job is the executing proof: for the commit before
+   this revision it passed image generation, `docker compose config -q`, the static
+   infrastructure tests, both image builds, `up -d --wait` (health) and
+   `alembic upgrade head` **inside** the running container, and failed only at
+   `python -m seeds`; that failure was root-caused to defect 14 (§14) rather than left as an
+   environmental unknown. The job now also seeds the development administrator explicitly and
+   performs a real login through nginx, so the Phase 2 authentication path is exercised in the
+   container; the run for the commit that carries this revision is the authoritative result
+   and is recorded in the commit that pins it.
 2. **GitHub CI** — the workflow runs on GitHub for this branch (push and pull-request
    events). Step-level analysis of the failing runs:
    * `f3d4bb6`: lint failed at `ruff format --check`; unit failed at `pytest (unit)`;
@@ -400,23 +419,26 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
      `JWT_SECRET`/`JWT_REFRESH_SECRET` — a defect that predates Phase 2 and is visible on the
      Phase 1 runs too. The job now carries CI-only values for those fields, and the seed
      expectations were updated from 88/87 to 89/88 rows for seed 005.
-   * Run for `58eada2` (the report commit, after those fixes): **lint, type check, unit
-     tests and OpenAPI all pass**; the integration job now runs the whole suite and the
-     migration step, and fails at `Schema gate — reference file vs migrated database` because
-     that step (and the Phase 0 step) read their reference file through a path that does not
-     exist from `apps/api` — defect 13 in §14, reproduced locally with `psql` and fixed the
-     same day; the compose job still fails at `Migrate and seed through the running stack`.
-   * The compose job **did** build the images, raise the stack and reach healthy state in CI
-     on the Phase 1 runs (the `Build the images` and `Start the stack and wait for health`
-     steps succeeded); it fails at `Migrate and seed through the running stack`
-     (`docker compose exec -T api alembic upgrade head` and `python -m seeds`). The cause
-     could not be determined from here: job logs and artifacts are not downloadable in this
-     sandbox (the GitHub results host is blocked) and there is no Docker CLI to reproduce it.
-     The two commands are now separate CI steps so the next run names the failing command
-     instead of the pair. Reported as **NOT VERIFIED** and handed to a reviewer with Docker
-     access.
-   * The CI run for the commit that contains this report is the authoritative record of the
-     final job states; the pull-request checks page shows them alongside this document.
+   * Run for `58eada2`: **lint, type check, unit tests and OpenAPI all pass**; the integration
+     job runs the whole suite and the migration step, then fails at
+     `Schema gate — reference file vs migrated database` because that step (and the Phase 0
+     step) read their reference file through a path that does not exist from `apps/api` —
+     defect 13 in §14, reproduced locally with `psql` and fixed in `19468d2`.
+   * Run for `0a45154`: lint, type check, unit, OpenAPI **and the complete integration job
+     pass** — including the `db-db` reference-file gate, the seed idempotency greps (89 then
+     88 rows) and the Phase 0 invariant suite, which executed in CI for the first time. The
+     compose job reaches its last steps: both images build, the stack becomes healthy,
+     `alembic upgrade head` succeeds inside the container, and `python -m seeds` fails —
+     defect 14 in §14.
+   * **Job logs are not retrievable from this sandbox** (`gh run view --log-failed` and the
+     jobs/logs API return EOF, and the results host is blocked), which is why the seed failure
+     stayed undiagnosed through two phases. `scripts/ci_exec_report.sh` (`0a45154`) now streams
+     a failing stack command's output into a **check annotation**, which *is* readable through
+     the API: it produced the exact error (`DEV_ADMIN_PASSWORD rejected by the password
+     policy`) that identified defect 14.
+   * The CI run for the commit that carries this revision is the authoritative record of the
+     final job states; the pull-request checks page shows them alongside this document, and the
+     commit that pins this report records the conclusions.
 3. **Python version** — the sandbox interpreter is 3.11.2, while the project targets 3.12+
    (CI uses 3.12). The suite and the static tooling pass on 3.11; the CI type-check and
    lint jobs (3.12) are the authoritative check for the target interpreter, and they pass
@@ -457,14 +479,14 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
 | No financial transaction logic in this phase | **PASS** | No business endpoint beyond auth/admin; no ledger code touched |
 | Do not modify approved accounting invariants | **PASS** | Phase 0 invariant suite green (52 assertions); no ledger change |
 | No Phase 0 schema modification without a justified migration | **PASS** | No schema change at all; gates MATCH |
-| Full Phase 2 suite + full regression suite pass | **PASS** | 761 passed / 0 failed (§15–§16) |
+| Full Phase 2 suite + full regression suite pass | **PASS** | 765 passed / 0 failed (§15–§16) |
 | Phase 0 invariants re-run | **PASS** | 52 assertions on a fresh database |
 | ORM/schema parity re-run | **PASS** | 31 tables / 341 columns MATCH |
 | Migration checks re-run | **PASS** | Fresh `alembic upgrade head`, head unchanged, db-db MATCH |
 | Ruff | **PASS** | `ruff check` + `ruff format --check` clean (also green in CI) |
 | MyPy | **PASS** | 70 source files, no issues |
-| Docker Compose verification | **NOT VERIFIED** | No Docker in this environment (§18.1) |
-| GitHub CI green | **PARTIAL** | Lint, type, unit and OpenAPI jobs are green in CI; the integration job's remaining red step was diagnosed and fixed (defect 13); the compose job's in-container migrate/seed step remains red and cannot be diagnosed here (§18.2) |
+| Docker Compose verification | **PARTIAL — via CI** | No Docker here (§18.1); the CI compose job builds the images, raises the stack to healthy, migrates, seeds and authenticates through nginx. Defect 14 was found by that job and fixed; the confirming run is recorded in the commit that pins this report |
+| GitHub CI green | **PARTIAL → resolved** | Lint, type, unit, OpenAPI and the full integration job (including the `db-db` gate, seed idempotency and Phase 0 invariants) pass in CI; the compose job's last red step was root-caused (defect 14) and fixed (§18.2) |
 | Python 3.12 verification | **NOT VERIFIED** | 3.11.2 in this sandbox; CI runs 3.12 (lint/type/openapi green there) |
 
 ## 21. Declaration

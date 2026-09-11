@@ -272,6 +272,40 @@ jobs:
       - name: Seed through the running stack (docker compose exec seeds)
         run: scripts/ci_exec_report.sh "python -m seeds in the running stack" docker compose exec -T api python -m seeds
 
+      # The documented default in .env.example is an empty DEV_ADMIN_PASSWORD (skip the
+      # development administrator). This second run overrides it for one process so the
+      # administrator branch of the seed — password policy, Argon2id hashing, role link,
+      # audit event — is executed inside the container as well, not only in the test
+      # database. The value is a CI-only fixture.
+      - name: Seed the development administrator inside the running stack
+        run: |
+          scripts/ci_exec_report.sh "development administrator seed in the running stack" \
+            docker compose exec -T -e DEV_ADMIN_PASSWORD='Ci-Only-Admin-Password-2026!' \
+            api python -m seeds
+
+      # End-to-end acceptance of the Phase 2 deliverable in the real stack:
+      # nginx -> uvicorn -> PostgreSQL -> Argon2id verification -> signed access token.
+      - name: Log in through nginx with the seeded administrator
+        run: |
+          set -euo pipefail
+          response="$(curl -fsS -X POST http://127.0.0.1:8080/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"Ci-Only-Admin-Password-2026!","device_uuid":"5f0d2f0e-3a5e-4c8e-9f3a-1b2c3d4e5f60","device_name":"ci-compose-acceptance","platform":"WEB"}')"
+          python3 - "${response}" <<'PY'
+          import json
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          assert payload["access_token"], payload
+          assert payload["refresh_token"], payload
+          assert payload["token_type"] == "bearer", payload
+          assert payload["device"]["is_new_registration"] is True, payload
+          assert "SUPER_ADMIN" in payload["roles"], payload
+          assert payload["user"]["username"] == "admin", payload
+          assert payload["must_change_password"] is False, payload
+          print("compose stack login ok: user=%s roles=%s" % (payload["user"]["username"], payload["roles"]))
+          PY
+
       - name: Readiness through nginx (PostgreSQL + Redis + schema revision)
         run: |
           set -euo pipefail

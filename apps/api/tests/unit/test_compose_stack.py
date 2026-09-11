@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -503,6 +504,104 @@ class TestOperatorScripts:
         text = path.read_text()
         assert "set -euo pipefail" in text
         assert "ON_ERROR_STOP=1" in text
+
+
+def _effective_env_value(raw: str) -> str:
+    """Return the value Docker Compose would hand to a container for one ``.env`` line.
+
+    Compose strips an inline comment only when it follows a **non-empty** value. The
+    comment is kept verbatim when the value is empty, so ``DEV_ADMIN_PASSWORD=  # note``
+    reaches the container as the literal text ``# note``. That behaviour broke the seed
+    step of the compose acceptance job (PHASE2_REPORT §14, defect 14) and is encoded here
+    on purpose: the tests below assert that the templates never rely on it.
+    """
+    head, separator, _ = raw.partition(" #")
+    if separator and head.strip():
+        return head.strip()
+    return raw.strip()
+
+
+def _parse_env_file(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, _, raw = line.partition("=")
+        values[key.strip()] = _effective_env_value(raw)
+    return values
+
+
+class TestGeneratedEnvironment:
+    """The generated environment must mean the same thing to Compose as it does to us.
+
+    ``docker compose up`` reads the file through Compose's own parser; a value that only
+    *looks* empty in an editor can reach the container as text. Both the template and the
+    output of ``scripts/gen_env.sh`` are checked for that class of ambiguity.
+    """
+
+    @staticmethod
+    def _generated(tmp_path: Path) -> Path:
+        (tmp_path / "scripts").mkdir()
+        shutil.copy2(SCRIPTS_DIR / "gen_env.sh", tmp_path / "scripts" / "gen_env.sh")
+        shutil.copy2(REPO_ROOT / ".env.example", tmp_path / ".env.example")
+        subprocess.run(
+            ["bash", str(tmp_path / "scripts" / "gen_env.sh")],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return tmp_path / ".env"
+
+    def test_template_never_puts_a_comment_on_an_empty_value(self) -> None:
+        risky = [
+            f"line {number}: {line}"
+            for number, line in enumerate(
+                (REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\s*#", line)
+        ]
+        assert not risky, (
+            "an inline comment on an empty value is read as the value by docker compose; "
+            f"move the comment to its own line: {risky}"
+        )
+
+    def test_generated_env_parses_to_the_documented_values(self, tmp_path: Path) -> None:
+        generated = self._generated(tmp_path)
+        assert (generated.stat().st_mode & 0o777) == 0o600, "the generated .env must be mode 600"
+
+        values = _parse_env_file(generated.read_text(encoding="utf-8"))
+        assert values["APP_ENV"] == "development"
+        assert values["LOG_FORMAT"] in {"json", "console"}
+        assert values["DEV_ADMIN_PASSWORD"] == "", (
+            "the documented default is an empty development-admin password (skip the seed); "
+            f"Compose would pass {values['DEV_ADMIN_PASSWORD']!r} to the container"
+        )
+        assert values["BACKUP_ENCRYPTION_RECIPIENT"] == "", (
+            "an empty recipient must stay empty: a comment text here would satisfy the "
+            "production backup-recipient check with a value that is not a recipient"
+        )
+        secret_values = [values[name] for name in sorted(SECRET_VARIABLES)]
+        assert all(secret_values), "every secret must be rendered"
+        assert len(set(secret_values)) == len(secret_values), "secrets must not repeat"
+
+    def test_generator_refuses_a_comment_on_an_empty_value(self, tmp_path: Path) -> None:
+        (tmp_path / "scripts").mkdir()
+        shutil.copy2(SCRIPTS_DIR / "gen_env.sh", tmp_path / "scripts" / "gen_env.sh")
+        template = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+        (tmp_path / ".env.example").write_text(
+            template + "DEV_ADMIN_PASSWORD=   # a comment\n", encoding="utf-8"
+        )
+        result = subprocess.run(
+            ["bash", str(tmp_path / "scripts" / "gen_env.sh")],
+            cwd=tmp_path,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "the generator accepted an ambiguous empty value"
+        assert "DEV_ADMIN_PASSWORD" in (result.stderr + result.stdout), result
+        assert not (tmp_path / ".env").exists(), "no .env may be written from an ambiguous template"
 
 
 class TestCiWorkflowPaths:
