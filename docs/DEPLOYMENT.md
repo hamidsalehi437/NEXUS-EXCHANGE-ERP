@@ -209,6 +209,10 @@ psql -v ON_ERROR_STOP=1 -d nexus_phase0 -f tests/invariants/phase0_schema_invari
 
 # Seed idempotency:
 docker compose exec -T api python -m seeds --check   # exit 0 when nothing would change
+
+# Celery transport proof: publishes every task to the real broker and waits for
+# the worker, then checks the maintenance tasks cleaned up the probe rows:
+docker compose exec -T api python scripts/verify_worker_live.py
 ```
 
 ## 9. Troubleshooting
