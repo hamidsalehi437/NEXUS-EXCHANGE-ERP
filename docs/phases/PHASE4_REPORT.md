@@ -77,7 +77,8 @@ is therefore:
 | --- | --- |
 | Base | `da0c9ff261123fd41b2806052adb1f82ecd21f33` (first submission, reviewed) |
 | Finalisation of the first submission | `6f95a37` — *docs(phase4): pin the implementation commit and record the green CI runs* |
-| Gate Review fix commit | *feat(accounting): close the exchange-direction and inventory-position holes* — hash pinned by the finalisation commit at the top of the branch |
+| Gate Review fix commit | **`21b6211d7918ad8a16b27d3ca1dc54887d22b907`** (`21b6211`) — *feat(accounting): close the exchange-direction and inventory-position holes*; 11 files, +1 986/−20 (2 production, 4 test, 5 documentation) |
+| CI on the fix commit | push run **`34659645307`** and pull-request run **`34659648417`** — both `completed`/`success`, all six jobs green |
 | Guidance | the reviewer's `PHASE 4 FINAL COMPLETION` brief: two holes, dedicated regression tests, full re-verification, no Phase 5 |
 | Result | **1173 tests pass, 0 failed, 0 skipped**, twice independently (§40.3) |
 
@@ -936,7 +937,7 @@ asserted unchanged after a refusal, and the ledger stays balanced
 | Reference checksum | `sha256sum docs/database/schema.sql` | unchanged against `CHECKSUMS.txt` |
 | Phase 0 invariants | `phase0_schema_invariants.sql` on a fresh migrated database | ALL ASSERTIONS PASSED (53 PASS lines) |
 | Seeds | `python -m seeds` → `python -m seeds` → `python -m seeds --check` | inserted=89 → unchanged=88 → unchanged=88 |
-| CI | push + pull-request runs of the fix commit | all six jobs success (recorded in `docs/PROJECT_STATUS.md` §3) |
+| CI | push run `34659645307` and pull-request run `34659648417` on `21b6211` | both `completed`/`success`, all six jobs green; every *Integration tests and schema gates* step green (integration pytest, migration on a clean database, both schema gates, seed idempotency, Phase 0 invariants) |
 
 **Test-count arithmetic.** The reviewed tree carried 1148 tests. This round adds 24
 (`test_accounting_exchange_direction.py` 13 + `test_accounting_generic_journal_guard.py` 11)
@@ -974,9 +975,10 @@ Phase 4 is **READY FOR REVIEW**. It is *not* approved: only the human reviewer m
 phase to APPROVED, and that decision is recorded in `docs/PROJECT_STATUS.md`.
 
 The first submission (`da0c9ff`) was reviewed independently; the two boundary holes the
-review found are fixed and pinned by §40, and the phase was re-verified end to end afterwards
-(1173 tests, 0 failed, 0 skipped, twice independently; every schema, invariant and seed gate
-re-run).
+review found are fixed in **`21b6211d7918ad8a16b27d3ca1dc54887d22b907`** and pinned by §40, and
+the phase was re-verified end to end afterwards (1173 tests, 0 failed, 0 skipped, three
+independent full runs; every schema, invariant and seed gate re-run; CI green on the fix commit
+in both the push run `34659645307` and the pull-request run `34659648417`).
 
 Phase 5 (exchange routes: buy/sell documents, receipts, cancel and reverse) has **not been
 started**, no Phase 5 code, route, migration or test exists, and nothing in this phase
