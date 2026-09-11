@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | **Phase 1 delivered — pending approval** |
+| Status | **Phase 1 delivered and verified — pending approval** |
 | Last updated | 2026-09-11 |
 | Rule | Each document has an ID, a version and an owner; documents change in the same PR as the behaviour they describe |
 
@@ -22,6 +22,7 @@
 | 10 | [`security/TEST_PLAN.md`](security/TEST_PLAN.md) | `SEC-TEST-001` | Test catalogue, security matrix, CI gates, Phase 0 evidence |
 | 11 | [`architecture/ROADMAP.md`](architecture/ROADMAP.md) | `ARCH-ROAD-001` | Phases 1–13 with exit criteria, risks, MVP mapping |
 | 12 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | `OPS-DEPLOY-001` | How to start, migrate, seed, verify and operate the five-service stack |
+| 13 | [`PHASE1_REPORT.md`](PHASE1_REPORT.md) | `PHASE1-REPORT-001` | Phase 1 verification report: PASS / FAIL / NOT VERIFIED per acceptance criterion |
 
 Supporting artifacts:
 
@@ -31,4 +32,4 @@ Supporting artifacts:
 
 ## Phase status in one line
 
-Phase 1 adds the real `apps/api` foundation (FastAPI + Pydantic v2 + SQLAlchemy 2.x), the Alembic initial revision that applies the approved schema verbatim (checksum-verified), the five-service Docker Compose stack, the idempotent seed runner, health/readiness endpoints, the Celery worker, CI, and the unit/integration suites — 424 tests green, both schema gates matching, the Phase 0 invariant suite green on a freshly migrated database. No business endpoint is implemented yet; that is Phase 2.
+Phase 1 adds the real `apps/api` foundation (FastAPI + Pydantic v2 + SQLAlchemy 2.x), the Alembic initial revision that applies the approved schema verbatim (checksum-verified), the five-service Docker Compose stack, the idempotent seed runner, health/readiness endpoints, the Celery worker, CI, and the unit/integration suites — 499 tests green, both schema gates matching, the Phase 0 invariant suite green on a freshly migrated database. No business endpoint is implemented yet; that is Phase 2.
