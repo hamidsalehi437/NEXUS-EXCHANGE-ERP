@@ -409,10 +409,12 @@ Required test minimums (PART 48, Phase 2 list) and where each is proved:
    * The compose job **did** build the images, raise the stack and reach healthy state in CI
      on the Phase 1 runs (the `Build the images` and `Start the stack and wait for health`
      steps succeeded); it fails at `Migrate and seed through the running stack`
-     (`docker compose exec -T api alembic upgrade head` / `python -m seeds`). The cause could
-     not be determined from here: job logs and artifacts are not downloadable in this sandbox
-     (the GitHub results host is blocked) and there is no Docker CLI to reproduce it.
-     Reported as **NOT VERIFIED** and handed to a reviewer with Docker access.
+     (`docker compose exec -T api alembic upgrade head` and `python -m seeds`). The cause
+     could not be determined from here: job logs and artifacts are not downloadable in this
+     sandbox (the GitHub results host is blocked) and there is no Docker CLI to reproduce it.
+     The two commands are now separate CI steps so the next run names the failing command
+     instead of the pair. Reported as **NOT VERIFIED** and handed to a reviewer with Docker
+     access.
    * The CI run for the commit that contains this report is the authoritative record of the
      final job states; the pull-request checks page shows them alongside this document.
 3. **Python version** — the sandbox interpreter is 3.11.2, while the project targets 3.12+

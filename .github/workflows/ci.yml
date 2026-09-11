@@ -262,11 +262,13 @@ jobs:
       - name: Start the stack and wait for health
         run: docker compose up -d --wait --wait-timeout 300
 
-      - name: Migrate and seed through the running stack
-        run: |
-          set -euo pipefail
-          docker compose exec -T api alembic upgrade head
-          docker compose exec -T api python -m seeds
+      # Split on purpose: a failure names the exact command that failed, which the
+      # combined step could not do (job logs are not always available to the reviewer).
+      - name: Migrate through the running stack (docker compose exec alembic)
+        run: docker compose exec -T api alembic upgrade head
+
+      - name: Seed through the running stack (docker compose exec seeds)
+        run: docker compose exec -T api python -m seeds
 
       - name: Readiness through nginx (PostgreSQL + Redis + schema revision)
         run: |
