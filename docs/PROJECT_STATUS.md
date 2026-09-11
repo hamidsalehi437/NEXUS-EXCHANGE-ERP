@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.0 |
+| Version | 1.2 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -51,9 +51,18 @@ Notes:
 * Phase 2 adds one grant-only migration (`0002_runtime_schema_revision`, decision `D-21` in
   `docs/database/SCHEMA.md`) and no structural schema change: the approved Phase 0 schema,
   its invariants and the frozen reference DDL are unchanged.
-* Phase 3 commits: `208a3cc` (start, last Phase 2 commit) → the implementation + report commit
-  that carries `docs/phases/PHASE3_REPORT.md` (see `git log`; 30 files, +6 300/−14) → the
-  finalisation commit that pins the hash and records the CI run.
+* Phase 3 commits: `208a3cc` (start, last Phase 2 commit) → **`db85e21`**
+  (`db85e212d2219d73a08f4ee26b2889e57b076f5f`, implementation + report; 33 files, +6 887/−22 —
+  18 production, 10 test, 4 documentation and 1 `pyproject.toml`) → the finalisation commit
+  (documentation only) that pins this hash and records the CI runs, at the top of the branch
+  and visible in `git log`.
+* Phase 3 verification on the pinned commit `db85e21`: `pytest tests -q` → **905 passed**
+  (0 failed, 0 skipped) in 123.00 s; `ruff check .` → clean, `ruff format --check .` → 119 files
+  already formatted; `mypy app seeds scripts` → no issues in 82 source files; fresh-database
+  migration (`0001` → `0002_runtime_schema_revision`, head), ORM/schema and schema/schema gates
+  MATCH (31 tables, 341 columns, 72 indexes, 71 checks, 48 triggers, 23 routines, 5 views);
+  Phase 0 invariant suite on a fresh migrated database → ALL ASSERTIONS PASSED (53 PASS lines);
+  seeds idempotent (89 / 88 / 88).
 * Phase 3 needed **no migration**: the approved Phase 0 schema already contained every table,
   constraint, index and function these entities use, so `docs/database/schema.sql` and the head
   revision `0002_runtime_schema_revision` are unchanged.
@@ -78,7 +87,7 @@ Each phase must, before it is declared complete:
 | Limitation | Impact | Status |
 | --- | --- | --- |
 | No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seeds, development administrator, login and readiness through nginx, worker registration) and its step conclusions are the evidence | **All 15 compose steps green** in run `34628225139` |
-| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`; the Phase 3 run is recorded in the finalisation commit |
+| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`. **Green for Phase 3** — run `34645985626` (push) and `34645990882` (PR) on `db85e21`: both `completed`/`success`, all six jobs `success` in each run (the only non-success step is `Container logs on failure`, `skipped` by design) |
 | Python 3.11.2 (system interpreter) instead of 3.12 | Runtime differs from the target interpreter; dependency set and code target 3.12 | Known; documented per phase |
 | No command-line `redis-cli`/`psql` on `PATH` | Verification uses the driver-level scripts (`scripts/schema_gate.py`, `tests/invariants/*.sql` executed through psycopg) | Worked around |
 
@@ -88,3 +97,4 @@ Each phase must, before it is declared complete:
 | --- | --- | --- |
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
 | 1.1 | 2026-09-12 | Phase 2 marked **APPROVED**; Phase 3 marked **READY FOR REVIEW** with `docs/phases/PHASE3_REPORT.md`; Phase 3 commit chain and the "no migration needed" note added; Phase 4–17 remain NOT STARTED |
+| 1.2 | 2026-09-12 | Phase 3 finalisation: the implementation commit pinned as `db85e21` with its exact diff stat and the full verification results (905 passed / ruff / mypy / migration / gates / Phase 0 invariants / seeds); the Phase 3 CI runs `34645985626` and `34645990882` recorded in the environment table. Phase 3 stays **READY FOR REVIEW** (not approved) and Phase 4–17 stay **NOT STARTED** |

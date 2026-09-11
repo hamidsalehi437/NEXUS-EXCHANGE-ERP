@@ -7,7 +7,8 @@
 | Status | **READY FOR REVIEW** |
 | Starting commit | `208a3cc` (Phase 2 finalization; last commit of the approved Phase 2) |
 | Branch | `arena/01a090c5-nexus-exchange-erp` (pull request: [#1](https://github.com/hamidsalehi437/NEXUS-EXCHANGE-ERP/pull/1)) |
-| Phase 3 commits | `208a3cc` → implementation + this report (the commit that carries this file, hash in `git log` and in `docs/PROJECT_STATUS.md` §1) → finalisation commit that pins the hash and records the CI run |
+| Phase 3 commits | `208a3cc` → **`db85e21`** (`db85e212d2219d73a08f4ee26b2889e57b076f5f`) — implementation + this report, 33 files, +6 887/−22 → the finalisation commit (documentation only) that pins this hash and records the CI runs |
+| Phase 3 CI | commit `db85e21`: run `34645985626` (push) and run `34645990882` (pull request) — both `completed`/`success`, all six jobs `success` (§21) |
 | Phase 4 | **NOT STARTED** — see §22 |
 | Schema impact | **None**: no new Alembic revision, `docs/database/schema.sql` byte-identical (`0002_runtime_schema_revision` remains head) |
 
@@ -46,6 +47,13 @@ The approved architecture, security model, accounting invariants, RBAC map, audi
 migration discipline and documentation structure of Phases 0–2 are preserved unchanged.
 No financial transaction, exchange, cash or ledger-posting logic was implemented: those
 belong to Phases 4–7 and were deliberately not started.
+
+**Phase 3 verification snapshot (commit `db85e21`)** — full suite **905 passed / 0 failed /
+0 skipped** in 123.00 s on the committed tree; `ruff check .` clean and
+`ruff format --check .` 119 files already formatted; `mypy app seeds scripts` clean over
+82 source files; fresh-database migration to `0002_runtime_schema_revision` with ORM↔DB and
+DB↔reference-schema gates **MATCH**; Phase 0 invariant suite **ALL ASSERTIONS PASSED**
+(53 PASS lines); seeds idempotent; GitHub CI green in the two runs on this commit (§21).
 
 ---
 
@@ -306,10 +314,12 @@ env -u DATABASE_URL -u DATABASE_MIGRATION_URL -u APP_ENV PYTHONPATH=. \
 
 | # | Command | Result |
 | --- | --- | --- |
-| 1 | full suite (above) | **905 passed, 0 failed** |
+| 1 | full suite (above) | **905 passed, 0 failed, 0 skipped** — **123.00 s on the committed tree `db85e21`** (124.85 s on the same tree immediately before the commit) |
 | 2 | `pytest tests -q` (Phase 2 baseline, same environment) | **769 passed** — reproduced before Phase 3 work started |
 | 3 | `pytest tests/unit -q` (CI unit-job shape) | **444 passed** in 1.82 s |
 | 4 | `pytest tests/integration -q` (real PostgreSQL) | **461 passed** |
+| 5 | the six Phase 3 suites, each with the same invocation | `currencies` 26 passed (6.57 s), `branches` 15 (5.46 s), `customers` 25 (6.36 s), `accounts` 28 (7.18 s), `rates` 36 (8.51 s), `workflow` 5 (4.12 s) — 135 passed, 0 failed |
+| 6 | the §12.1 defect-regression node ids, executed as one explicit invocation | **22 passed in 7.32 s**, 0 failed, 0 skipped |
 
 Phase 3 suites (all green):
 
@@ -340,7 +350,7 @@ test doubles for the database, the limiter or the audit service.
 | Seed idempotency | first run `inserted=89 updated=0`, second run and `--check` `unchanged=88` (the CI greps match exactly) |
 | Migration on a clean database | `alembic upgrade head` + `alembic current` → `0002_runtime_schema_revision (head)` |
 | Schema gates | `orm-db`: 31 tables / 341 columns / **MATCH**; `db-db`: 71 checks, 48 triggers, 23 routines, 5 views / **MATCH** |
-| Compose stack (PART 44) | executed by GitHub CI (no Docker in this sandbox): compose validation, build, `up -d --wait`, migrate, seeds, administrator, login, readiness through nginx — all 15 steps green for Phase 2; the Phase 3 run is recorded in the finalisation commit |
+| Compose stack (PART 44) | executed by GitHub CI (no Docker in this sandbox): compose validation, build, `up -d --wait`, migrate, seeds, administrator, login, readiness through nginx, worker check — all 15 steps green on the Phase 3 commit in both CI runs (§21) |
 
 ---
 
@@ -367,7 +377,9 @@ is covered by at least one test. None was left as a known-broken path.
 ### 12.1 Defect-to-regression-test map
 
 Every defect in §12 is covered by at least one test that fails if the fix is reverted.
-The node ids below were executed individually on the final committed state (all pass):
+The node ids below were executed as one explicit `pytest` invocation on the final committed
+state `db85e21` (each node selected individually, `TestRateAppendOnly` in full) —
+**22 passed in 7.32 s**, 0 failed, 0 skipped:
 
 | # | Defect (short name) | Covering test(s) |
 | --- | --- | --- |
@@ -387,7 +399,7 @@ The node ids below were executed individually on the final committed state (all 
 Additional contract-level coverage that keeps the tuple/dict view contracts honest:
 
 * `tests/integration/test_masterdata_accounts.py::TestAccountTree::test_the_listing_reports_who_has_children`
-  and `...::TestAccountUpdates::*` fail if the router stops consuming `AccountView`.
+  and `...::TestAccountIdentity::test_an_unused_account_may_be_recoded_and_retyped` fail if the router stops consuming `AccountView`.
 * `tests/integration/test_masterdata_rates.py::TestRateAppendOnly::test_the_api_exposes_no_way_to_change_a_quote`
   pins the route table (21 operations, `/rates` = `GET` + `POST` only), so a tuple/method
   contract regression is caught at the surface, not by a 500 at runtime.
@@ -399,7 +411,7 @@ Additional contract-level coverage that keeps the tuple/dict view contracts hone
 ```bash
 cd apps/api
 python -m ruff check .            # All checks passed!
-python -m ruff format --check .   # 118 files already formatted
+python -m ruff format --check .   # 119 files already formatted
 ```
 
 No `# noqa` was added to silence a real finding; the two uses in Phase 3 code are the
@@ -512,7 +524,7 @@ grep -rniE "TODO|FIXME|XXX|HACK|coming soon|placeholder|mock|not implemented" \
 | 15 | Ruff, MyPy, migration, schema gates, ORM parity, Phase 0 invariants | **DONE** (§13–§15) |
 | 16 | `docs/phases/PHASE3_REPORT.md` with the mandated sections | **DONE** — this document |
 | 17 | `docs/PROJECT_STATUS.md` updated (0/1/2 APPROVED, 3 READY FOR REVIEW, 4–17 NOT STARTED) | **DONE** |
-| 18 | Phase 3 PR checks pass (GitHub CI) | recorded in the finalisation commit; all six jobs are required to be green |
+| 18 | Phase 3 PR checks pass (GitHub CI) | **DONE** — runs `34645985626` (push) and `34645990882` (pull request) on `db85e21`; both `completed`/`success`, all six jobs `success`, no annotations (§21) |
 | 19 | Commit + push + PR description updated with the acceptance summary | **DONE** at the end of this phase — see the PR |
 | 20 | Do **not** mark Phase 3 approved; do **not** start Phase 4; stop for review | **DONE** — §22 |
 
@@ -538,24 +550,50 @@ this report.
 `pyproject.toml` (markers), `docs/api/API_CONTRACT.md` (§4 and §9.2),
 `docs/PROJECT_STATUS.md`, `README.md`.
 
-Exact `git diff --cached --stat` at the Phase 3 implementation commit (measured, not
+Exact `git show --numstat` for the Phase 3 implementation commit `db85e21` (measured, not
 estimated):
 
 | Scope | Files | Lines |
 | --- | --- | --- |
 | Production (`apps/api/app`) | 18 (13 added, 5 modified) | +3 585 / −11 |
 | Tests (`apps/api/tests`) | 10 (9 added, 1 modified) | +2 702 / −0 |
-| Documentation (`docs/`, `README.md`) and `pyproject.toml` markers | 5 | +565 / −11 |
-| **Total** | **33** | **+6 852 / −22** |
+| Documentation (`docs/`, `README.md`) and `pyproject.toml` markers | 5 | +600 / −11 |
+| **Total** | **33** | **+6 887 / −22** |
+
+Correction note: an earlier snapshot of this table printed “+6 852” for the documentation
+scope (+565) because it was taken before the §12.1 defect-to-test map was appended to this
+report. The table above is the exact stat of the committed tree; the only difference is the
+35 lines of §12.1 in this file. The Phase 3 finalisation commit (which pins this hash and
+the CI run) is a documentation-only commit on top of `db85e21`, so the numbers above
+describe every line of Phase 3 code and tests that exists in the branch.
 
 ## 21. Environment and CI evidence
 
 * Local verification environment: PostgreSQL 16.2 (`/tmp/pgdata`, 127.0.0.1:5432), Redis
   6.2.14 (redislite, 127.0.0.1:6379, database 15), Python 3.11.2 in `/tmp/venv`, no Docker.
-* GitHub CI (`.github/workflows/ci.yml`) jobs: `Lint (ruff)`, `Type check (mypy)`,
-  `Unit tests`, `Integration tests and schema gates`, `Compose stack (PART 44 acceptance)`,
-  `OpenAPI contract artefact`. The Phase 3 run and its step conclusions are recorded in the
-  finalisation commit and in the pull request.
+* GitHub CI (`.github/workflows/ci.yml`) ran **twice on the final Phase 3 commit**
+  `db85e212d2219d73a08f4ee26b2889e57b076f5f`: run **`34645985626`** (`push` event) and run
+  **`34645990882`** (`pull_request` event). Both are `completed` / **`success`** and every
+  job in both runs concluded **`success`**:
+
+| Job | Run `34645985626` (push) | Run `34645990882` (PR) |
+| --- | --- | --- |
+| Lint (ruff) | success | success |
+| Type check (mypy) | success | success |
+| Unit tests | success | success |
+| Integration tests and schema gates | success | success |
+| Compose stack (PART 44 acceptance) | success | success |
+| OpenAPI document | success | success |
+
+* Step-level detail (read back from the GitHub API): every step of every job is `success`
+  except the single step **`Container logs on failure`** in the Compose job, which reports
+  **`skipped`** — it is guarded to run only when an earlier step of that job has failed, so
+  `skipped` is its correct state on a green run. No step reported `failure` or `cancelled`
+  in either run, and neither run carries annotations.
+* Job **logs are not retrievable in this sandbox** (the logs API and
+  `gh run view --log-failed` return EOF — a known environment limitation, not a CI failure);
+  the per-job and per-step conclusions above come from the GitHub API. See §17 for the full
+  list of environment limitations.
 
 ## 22. Status statement
 
