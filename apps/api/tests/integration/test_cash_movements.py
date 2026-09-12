@@ -239,7 +239,9 @@ def test_a_payout_the_drawer_cannot_cover_is_refused_before_anything_is_written(
     assert refusal.status_code == 409
     assert error_code(refusal) == "INSUFFICIENT_BALANCE"
     assert error_details(refusal)["shortfall"] == "500.0000000000"
-    assert error_details(refusal)["reason"] in {"QUANTITY_EXCEEDED", "NO_POSITION"}
+    assert error_details(refusal)["reason"] == "QUANTITY_EXCEEDED"
+    assert error_details(refusal)["foreign_quantity"] == "1000.0000000000"
+    assert error_details(refusal)["disposing_quantity"] == "1500.0000000000"
     assert book(world) == before
     assert balance_of(world, SALARIES) == Decimal("0")
 
@@ -257,6 +259,57 @@ def test_a_payout_the_drawer_cannot_cover_is_refused_before_anything_is_written(
     assert world.cash(AFN) == Decimal("100")
     assert world.ledger(AFN) == Decimal("100")
     assert balance_of(world, SALARIES) == Decimal("900")
+
+
+def test_a_payout_from_a_drawer_emptied_to_zero_reports_no_position_not_a_shortfall(
+    cash_counter: ExchangeWorld, api_client: TestClient, admin_headers: dict[str, str]
+) -> None:
+    """The two shapes of an ``INSUFFICIENT_BALANCE`` refusal are not interchangeable.
+
+    A drawer that holds *nothing* has no shortfall to state: the operator is told
+    ``NO_POSITION`` (with the zero the drawer actually carries), not a number that would
+    read as "we are a little short". A drawer that holds *some* cash but not enough is told
+    exactly how much is missing. Both shapes name the drawer and the quantity it was asked
+    to deliver, and each refuses without writing anything.
+    """
+    world = cash_counter
+    afn = world.money(AFN).id
+    session_id = open_shift(world, api_client, AFN="1000")
+    salaries = account_id_of(world.database, SALARIES)
+
+    emptied = post_out(
+        api_client,
+        world.headers,
+        branch_id=world.branch_id,
+        currency_id=afn,
+        amount="1000",
+        target_account_id=salaries,
+        session_id=session_id,
+    )
+    assert emptied.status_code == 201
+    assert world.cash(AFN) == Decimal("0")
+    assert world.ledger(AFN) == Decimal("0")
+
+    before = book(world)
+    refusal = post_out(
+        api_client,
+        world.headers,
+        branch_id=world.branch_id,
+        currency_id=afn,
+        amount="100",
+        target_account_id=salaries,
+        session_id=session_id,
+        expect=None,
+    )
+    assert refusal.status_code == 409
+    assert error_code(refusal) == "INSUFFICIENT_BALANCE"
+    details = error_details(refusal)
+    assert details["reason"] == "NO_POSITION"
+    assert "shortfall" not in details
+    assert details["foreign_quantity"] == "0.0000000000"
+    assert details["disposing_quantity"] == "100.0000000000"
+    assert book(world) == before
+    assert balance_of(world, SALARIES) == Decimal("1000")
 
 
 def test_a_foreign_receipt_is_valued_by_the_house_quote_and_a_disposal_by_the_carrying_rate(

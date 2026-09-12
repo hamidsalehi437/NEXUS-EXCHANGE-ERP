@@ -238,10 +238,23 @@ def test_a_storm_of_mixed_directions_never_leaves_the_till_out_of_step(
         move_out(world, session_id, "100", counter_account_id=salaries),
     )
 
-    # Whatever the database decided, a refusal may only ever be "not enough cash".
+    # Whatever the database decided, a refusal may only ever be "not enough cash" — and it has
+    # to say which of the two shapes it is. A payout that reaches a till another payout has just
+    # emptied finds no position at all (``NO_POSITION``: there is no shortfall to state), while
+    # one that finds some cash and not enough of it is a ``QUANTITY_EXCEEDED`` carrying the
+    # shortfall. Which one arrives depends on the interleaving, so the invariant is the contract's
+    # shape (exactly one of the two, with its own evidence) rather than a particular winner.
     for outcome in refusals(outcomes):
         assert refusal_code(outcome) == "INSUFFICIENT_BALANCE", outcome
-        assert Decimal(str(refusal_details(outcome)["shortfall"])) > 0
+        details = refusal_details(outcome)
+        assert Decimal(str(details["disposing_quantity"])) > 0, details
+        if details["reason"] == "NO_POSITION":
+            assert "shortfall" not in details, details
+            assert Decimal(str(details["foreign_quantity"])) == 0, details
+        else:
+            assert details["reason"] == "QUANTITY_EXCEEDED", details
+            assert Decimal(str(details["foreign_quantity"])) > 0, details
+            assert Decimal(str(details["shortfall"])) > 0, details
     assert len(succeeded(outcomes)) >= 1
 
     rows = movement_rows(world.database, branch_id=world.branch_id)

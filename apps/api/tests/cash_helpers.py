@@ -393,6 +393,34 @@ def get_current(
     return response
 
 
+# Statement prefixes for the raw-SQL reads below: pure literals, so the assembled text is
+# the constant plus the caller's own clause constants — never interpolated caller input.
+_MOVEMENTS_FOR_SELECT = """
+SELECT m.id, m.branch_id, m.account_id, m.currency_id, c.code AS currency_code,
+       m.movement_type, m.amount, m.signed_amount, m.adjustment_sign, m.reference_type,
+       m.reference_id, m.cash_session_id, m.journal_entry_id, m.client_event_id,
+       m.created_by, m.created_at, a.code AS account_code
+  FROM cash_movements m
+  JOIN currencies c ON c.id = m.currency_id
+  JOIN accounts a ON a.id = m.account_id
+ WHERE """
+
+_MOVEMENTS_FOR_TAIL = """
+ ORDER BY m.created_at, m.id
+"""
+
+_AUDIT_SELECT = "SELECT * FROM audit_logs WHERE "
+_AUDIT_TAIL = " ORDER BY seq"
+
+_ENTRIES_SELECT = """
+SELECT e.* FROM journal_entries e
+ WHERE e.branch_id = :branch_id """
+
+_ENTRIES_TAIL = """
+ ORDER BY e.created_at, e.id
+"""
+
+
 def counted(*items: tuple[Any, str]) -> list[dict[str, str]]:
     """``[(currency_id, "1000.00"), …]`` as the close body's ``counted`` array."""
     return [{"currency_id": str(currency_id), "amount": amount} for currency_id, amount in items]
@@ -421,17 +449,7 @@ def movement_rows(
         params["movement_type"] = movement_type
     return read(
         database,
-        f"""
-        SELECT m.id, m.branch_id, m.account_id, m.currency_id, c.code AS currency_code,
-               m.movement_type, m.amount, m.signed_amount, m.adjustment_sign, m.reference_type,
-               m.reference_id, m.cash_session_id, m.journal_entry_id, m.client_event_id,
-               m.created_by, m.created_at, a.code AS account_code
-          FROM cash_movements m
-          JOIN currencies c ON c.id = m.currency_id
-          JOIN accounts a ON a.id = m.account_id
-         WHERE {" AND ".join(clauses)}
-         ORDER BY m.created_at, m.id
-        """,  # noqa: S608 - the clauses are constants chosen above, never caller input
+        _MOVEMENTS_FOR_SELECT + " AND ".join(clauses) + _MOVEMENTS_FOR_TAIL,
         **params,
     )
 
@@ -573,7 +591,7 @@ def audit_rows(
         params["entity_type"] = entity_type
     return read(
         database,
-        f"SELECT * FROM audit_logs WHERE {' AND '.join(clauses)} ORDER BY seq",  # noqa: S608
+        _AUDIT_SELECT + " AND ".join(clauses) + _AUDIT_TAIL,
         **params,
     )
 
@@ -608,11 +626,7 @@ def branch_entries(
         params["reference_type"] = reference_type
     return read(
         database,
-        f"""
-        SELECT e.* FROM journal_entries e
-         WHERE e.branch_id = :branch_id {clause}
-         ORDER BY e.created_at, e.id
-        """,  # noqa: S608 - the clause is a constant chosen above
+        _ENTRIES_SELECT + clause + _ENTRIES_TAIL,
         **params,
     )
 

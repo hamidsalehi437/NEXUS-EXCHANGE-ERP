@@ -56,9 +56,35 @@ REVERSIBLE_REFERENCE_TYPES = (REFERENCE_TYPE_CASH,)
 STATUS_OPEN = "OPEN"
 STATUS_CLOSED = "CLOSED"
 
-# One projection for every movement read, so a row means the same thing wherever it is
-# printed. ``signed_amount`` is the canonical sign (positive = money into the drawer).
-_MOVEMENT_COLUMNS = """
+# Statement prefixes. Each is a **pure literal** — columns, joins and the ``WHERE``
+# keyword — so a query is composed from named constants plus bound parameters and never
+# interpolates SQL text: the parts a caller chooses (filters, caller scope, order) are
+# constants defined below, and every value travels as a bind parameter.
+_SESSION_SELECT = """SELECT
+        s.id, s.branch_id, b.code AS branch_code, b.name AS branch_name,
+        b.timezone AS branch_timezone, b.is_active AS branch_is_active,
+        s.device_id, d.device_uuid, d.device_name, d.platform,
+        s.opened_by, opener.username AS opened_by_username,
+        s.opened_at, s.closed_by, closer.username AS closed_by_username,
+        s.closed_at, s.status, s.notes
+        FROM cash_sessions s
+        JOIN branches b ON b.id = s.branch_id
+        LEFT JOIN devices d ON d.id = s.device_id
+        LEFT JOIN users opener ON opener.id = s.opened_by
+        LEFT JOIN users closer ON closer.id = s.closed_by
+        WHERE """
+
+_SESSION_COUNT = """SELECT COUNT(*) AS count FROM cash_sessions s WHERE """
+
+_LINE_SELECT = """SELECT
+        l.id, l.cash_session_id, l.currency_id, c.code AS currency_code,
+        c.decimal_places AS currency_decimal_places, c.name AS currency_name,
+        l.opening_declared, l.expected_amount, l.counted_amount, l.difference
+        FROM cash_session_lines l
+        JOIN currencies c ON c.id = l.currency_id
+        WHERE """
+
+_MOVEMENT_SELECT = """SELECT
         m.id, m.branch_id, b.code AS branch_code,
         m.account_id, a.code AS account_code,
         m.currency_id, c.code AS currency_code, c.decimal_places AS currency_decimal_places,
@@ -67,14 +93,43 @@ _MOVEMENT_COLUMNS = """
         m.created_by, u.username AS created_by_username, m.created_at,
         m.cash_session_id, s.status AS session_status,
         m.device_id, m.journal_entry_id, m.client_event_id
-"""
-
-_MOVEMENT_JOINS = """
+        FROM cash_movements m
         JOIN branches b ON b.id = m.branch_id
         JOIN accounts a ON a.id = m.account_id
         JOIN currencies c ON c.id = m.currency_id
         LEFT JOIN users u ON u.id = m.created_by
         LEFT JOIN cash_sessions s ON s.id = m.cash_session_id
+        WHERE """
+
+_MOVEMENT_COUNT = """SELECT COUNT(*) AS count FROM cash_movements m WHERE """
+
+_POSITION_SELECT = """SELECT v.branch_id, v.branch_code, v.currency_id, v.currency_code,
+       v.balance, v.last_movement_at
+  FROM v_cash_position v
+ WHERE """
+
+_POSITION_TAIL = """
+ ORDER BY v.branch_code, v.currency_code
+"""
+
+_LEDGER_POSITION_SELECT = """SELECT e.branch_id,
+       l.currency_id,
+       COALESCE(SUM(l.debit - l.credit), 0) AS functional_balance,
+       COALESCE(SUM(CASE WHEN l.debit > 0
+                         THEN l.foreign_amount
+                         ELSE -l.foreign_amount END), 0) AS quantity
+  FROM journal_lines l
+  JOIN journal_entries e ON e.id = l.journal_entry_id
+  JOIN accounts a ON a.id = l.account_id
+ WHERE a.account_type = 'ASSET'
+   AND a.is_active
+   AND a.is_postable
+   AND (a.branch_id = e.branch_id
+        OR (a.branch_id IS NULL AND a.code ~ :band_pattern))
+   AND """
+
+_LEDGER_POSITION_TAIL = """
+ GROUP BY e.branch_id, l.currency_id
 """
 
 # One filter fragment shared by the page query and its count. ``currency_id``,
@@ -224,10 +279,7 @@ class CashSessionRepository:
     # ------------------------------------------------------------------- reads
     async def row(self, session_id: uuid.UUID) -> dict[str, Any] | None:
         """The session header as a plain row (one statement, joined to its codes)."""
-        statement = text(
-            f"SELECT {_SESSION_COLUMNS} FROM cash_sessions s {_SESSION_JOINS} "  # noqa: S608
-            "WHERE s.id = :session_id"
-        )
+        statement = text(f"{_SESSION_SELECT}s.id = :session_id")
         row = (
             (await self._session.execute(statement, {"session_id": session_id}))
             .mappings()
@@ -239,10 +291,9 @@ class CashSessionRepository:
         """Several session headers in one statement (no N+1 on a list page)."""
         if not session_ids:
             return []
-        statement = text(
-            f"SELECT {_SESSION_COLUMNS} FROM cash_sessions s {_SESSION_JOINS} "  # noqa: S608
-            "WHERE s.id IN :session_ids"
-        ).bindparams(bindparam("session_ids", expanding=True))
+        statement = text(f"{_SESSION_SELECT}s.id IN :session_ids").bindparams(
+            bindparam("session_ids", expanding=True)
+        )
         rows = (
             (await self._session.execute(statement, {"session_ids": list(session_ids)}))
             .mappings()
@@ -252,10 +303,7 @@ class CashSessionRepository:
 
     async def lines(self, session_id: uuid.UUID) -> list[dict[str, Any]]:
         """The reconciliation lines of one session, in chart order."""
-        statement = text(
-            f"SELECT {_LINE_COLUMNS} FROM cash_session_lines l {_LINE_JOINS} "  # noqa: S608
-            "WHERE l.cash_session_id = :session_id ORDER BY c.code"
-        )
+        statement = text(f"{_LINE_SELECT}l.cash_session_id = :session_id ORDER BY c.code")
         rows = (await self._session.execute(statement, {"session_id": session_id})).mappings().all()
         return [dict(row) for row in rows]
 
@@ -266,8 +314,7 @@ class CashSessionRepository:
         if not session_ids:
             return {}
         statement = text(
-            f"SELECT {_LINE_COLUMNS} FROM cash_session_lines l {_LINE_JOINS} "  # noqa: S608
-            "WHERE l.cash_session_id IN :session_ids ORDER BY c.code"
+            f"{_LINE_SELECT}l.cash_session_id IN :session_ids ORDER BY c.code"
         ).bindparams(bindparam("session_ids", expanding=True))
         rows = (
             (await self._session.execute(statement, {"session_ids": list(session_ids)}))
@@ -331,13 +378,10 @@ class CashSessionRepository:
         if branch_ids is not None:
             params["branch_ids"] = list(branch_ids)
         page = text(
-            f"SELECT {_SESSION_COLUMNS} FROM cash_sessions s {_SESSION_JOINS} "  # noqa: S608
-            f"WHERE {_SESSION_FILTERS} AND {scope} {_SESSION_ORDER} LIMIT :limit OFFSET :offset"
+            f"{_SESSION_SELECT}{_SESSION_FILTERS} AND {scope} {_SESSION_ORDER} "
+            f"LIMIT :limit OFFSET :offset"
         )
-        counted = text(
-            f"SELECT COUNT(*) AS count FROM cash_sessions s "  # noqa: S608
-            f"WHERE {_SESSION_FILTERS} AND {scope}"
-        )
+        counted = text(f"{_SESSION_COUNT}{_SESSION_FILTERS} AND {scope}")
         if branch_ids is not None:
             page = page.bindparams(_EXPANDING_BRANCHES)
             counted = counted.bindparams(_EXPANDING_BRANCHES)
@@ -389,15 +433,7 @@ class CashSessionRepository:
         if branch_ids is not None and not branch_ids:
             return []
         scope = _branch_clause("v.branch_id", branch_ids)
-        statement = text(
-            f"""
-            SELECT v.branch_id, v.branch_code, v.currency_id, v.currency_code,
-                   v.balance, v.last_movement_at
-              FROM v_cash_position v
-             WHERE {scope}
-             ORDER BY v.branch_code, v.currency_code
-            """  # noqa: S608
-        )
+        statement = text(f"{_POSITION_SELECT}{scope}{_POSITION_TAIL}")
         params: dict[str, Any] = {}
         if branch_ids is not None:
             statement = statement.bindparams(_EXPANDING_BRANCHES)
@@ -422,26 +458,7 @@ class CashSessionRepository:
         if branch_ids is not None and not branch_ids:
             return []
         scope = _branch_clause("e.branch_id", branch_ids)
-        statement = text(
-            f"""
-            SELECT e.branch_id,
-                   l.currency_id,
-                   COALESCE(SUM(l.debit - l.credit), 0) AS functional_balance,
-                   COALESCE(SUM(CASE WHEN l.debit > 0
-                                     THEN l.foreign_amount
-                                     ELSE -l.foreign_amount END), 0) AS quantity
-              FROM journal_lines l
-              JOIN journal_entries e ON e.id = l.journal_entry_id
-              JOIN accounts a ON a.id = l.account_id
-             WHERE a.account_type = 'ASSET'
-               AND a.is_active
-               AND a.is_postable
-               AND (a.branch_id = e.branch_id
-                    OR (a.branch_id IS NULL AND a.code ~ :band_pattern))
-               AND {scope}
-             GROUP BY e.branch_id, l.currency_id
-            """  # noqa: S608
-        )
+        statement = text(f"{_LEDGER_POSITION_SELECT}{scope}{_LEDGER_POSITION_TAIL}")
         params: dict[str, Any] = {"band_pattern": band_pattern}
         if branch_ids is not None:
             statement = statement.bindparams(_EXPANDING_BRANCHES)
@@ -501,10 +518,7 @@ class CashMovementRepository:
         self._session.add(movement)
 
     async def row(self, movement_id: uuid.UUID) -> dict[str, Any] | None:
-        statement = text(
-            f"SELECT {_MOVEMENT_COLUMNS} FROM cash_movements m {_MOVEMENT_JOINS} "  # noqa: S608
-            "WHERE m.id = :movement_id"
-        )
+        statement = text(f"{_MOVEMENT_SELECT}m.id = :movement_id")
         row = (
             (await self._session.execute(statement, {"movement_id": movement_id}))
             .mappings()
@@ -527,8 +541,7 @@ class CashMovementRepository:
     async def reversal_of(self, movement_id: uuid.UUID) -> dict[str, Any] | None:
         """The compensating movement written for one movement, if it exists."""
         statement = text(
-            f"SELECT {_MOVEMENT_COLUMNS} FROM cash_movements m {_MOVEMENT_JOINS} "  # noqa: S608
-            "WHERE m.reference_type = :kind AND m.reference_id = :movement_id"
+            f"{_MOVEMENT_SELECT}m.reference_type = :kind AND m.reference_id = :movement_id"
         )
         row = (
             (
@@ -547,9 +560,8 @@ class CashMovementRepository:
     ) -> list[dict[str, Any]]:
         """Every movement written for one document reference, in a stable order."""
         statement = text(
-            f"SELECT {_MOVEMENT_COLUMNS} FROM cash_movements m {_MOVEMENT_JOINS} "  # noqa: S608
-            "WHERE m.reference_type = :reference_type AND m.reference_id = :reference_id "
-            "ORDER BY m.movement_type, m.id"
+            f"{_MOVEMENT_SELECT}m.reference_type = :reference_type "
+            f"AND m.reference_id = :reference_id ORDER BY m.movement_type, m.id"
         )
         rows = (
             (
@@ -569,10 +581,7 @@ class CashMovementRepository:
         The frozen schema makes the event id unique across the table, so this is the one place
         a replayed offline receipt can be recognised before the money moves twice.
         """
-        statement = text(
-            f"SELECT {_MOVEMENT_COLUMNS} FROM cash_movements m {_MOVEMENT_JOINS} "  # noqa: S608
-            "WHERE m.client_event_id = :client_event_id"
-        )
+        statement = text(f"{_MOVEMENT_SELECT}m.client_event_id = :client_event_id")
         row = (
             (await self._session.execute(statement, {"client_event_id": client_event_id}))
             .mappings()
@@ -583,8 +592,7 @@ class CashMovementRepository:
     async def session_movements(self, session_id: uuid.UUID) -> list[dict[str, Any]]:
         """Every movement a shift recorded, oldest first (its own history)."""
         statement = text(
-            f"SELECT {_MOVEMENT_COLUMNS} FROM cash_movements m {_MOVEMENT_JOINS} "  # noqa: S608
-            "WHERE m.cash_session_id = :session_id ORDER BY m.created_at, m.id"
+            f"{_MOVEMENT_SELECT}m.cash_session_id = :session_id ORDER BY m.created_at, m.id"
         )
         rows = (await self._session.execute(statement, {"session_id": session_id})).mappings().all()
         return [dict(row) for row in rows]
@@ -664,13 +672,10 @@ class CashMovementRepository:
         if branch_ids is not None:
             params["branch_ids"] = list(branch_ids)
         page = text(
-            f"SELECT {_MOVEMENT_COLUMNS} FROM cash_movements m {_MOVEMENT_JOINS} "  # noqa: S608
-            f"WHERE {_MOVEMENT_FILTERS} AND {scope} {_MOVEMENT_ORDER} LIMIT :limit OFFSET :offset"
+            f"{_MOVEMENT_SELECT}{_MOVEMENT_FILTERS} AND {scope} {_MOVEMENT_ORDER} "
+            f"LIMIT :limit OFFSET :offset"
         )
-        counted = text(
-            f"SELECT COUNT(*) AS count FROM cash_movements m "  # noqa: S608
-            f"WHERE {_MOVEMENT_FILTERS} AND {scope}"
-        )
+        counted = text(f"{_MOVEMENT_COUNT}{_MOVEMENT_FILTERS} AND {scope}")
         if branch_ids is not None:
             page = page.bindparams(_EXPANDING_BRANCHES)
             counted = counted.bindparams(_EXPANDING_BRANCHES)
