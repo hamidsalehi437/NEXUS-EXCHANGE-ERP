@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.10 |
+| Version | 1.12 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -159,9 +159,21 @@ Notes:
   commit and record the green CI runs*) → **`f8cece6`** (`f8cece6bf26182016d06d885496bd9b03215473f`, *feat(cash): complete
   phase 6 cash management*; **22 files, +9 215/−21** — 11 production, 1 tooling, 7 test and
   3 documentation files, `docs/phases/PHASE6_REPORT.md` and this document included),
-  pushed to branch `arena/01a090c5-nexus-exchange-erp` → the **finalisation commit**
-  (documentation only) that pins this hash and records the CI runs, at the top of the branch and
-  visible in `git log`.
+  pushed to branch `arena/01a090c5-nexus-exchange-erp` → **`8ad906d`** (*docs(phase6): pin the
+  implementation commit and record the green CI runs*), also pushed → **`f4f90e2`** (*fix(cash):
+  compose cash SQL from pure-literal prefixes and pin both refusal shapes*), committed locally →
+  the documentation commit that pins these hashes and refreshes the counts and coverage numbers.
+* Phase 6 follow-up commit **`f4f90e2`** (`fix(cash)`: SQL composed from pure-literal statement
+  prefixes, defect `D6-9`; and the two contractual refusal shapes pinned, defect `D6-10`): the phase's own hygiene gate counted **18 `# noqa: S608`** suppressions in the
+  first draft — more than double the seven the codebase already had — and instead of documenting
+  them the queries were rewritten so the rule has nothing to flag. The composed SQL is asserted
+  token-identical site by site, the phase's production code still adds **zero** `# noqa` and
+  **zero** `# type: ignore`, and the full suite re-runs green.
+* Phase 6 coverage (SEC-TEST-001 §6 floor 85 % on `services/` and `core/`), measured with a
+  per-thread tracer because `coverage.py` misses code executed through SQLAlchemy's greenlet
+  bridge — which made the same module read as 76 % under `pytest-cov` and 92.9 % under the
+  tracer: `app/services/cash_service.py` **92.9 %**, `app/repositories/cash.py` **89.4 %**,
+  `app/api/v1/cash.py` **100 %**, `app/schemas/cash.py` **95.1 %**.
 * Phase 6 CI on `f8cece6`: push run `34677845254` and pull-request run `34677848307`, both
   `completed`/**`success`** with all six jobs green (*Lint (ruff)*, *Type check (mypy)*,
   *Unit tests*, *OpenAPI document*, *Integration tests and schema gates*, *Compose stack (PART 44
@@ -170,9 +182,10 @@ Notes:
 * Phase 6 verification (whole sweep run **twice consecutively**, exit 0 both times): `ruff check .`
   clean; `ruff format --check .` → 156 files already formatted; `mypy app seeds scripts` → no
   issues in **97** source files; `pytest tests/unit -q` → **577 passed** (2.16 s);
-  `pytest tests/integration -q` → **799 passed** (240.48 s then 237.40 s), i.e. **1 376 passed**
-  against the 1 301-test baseline of `9d67582` (548 unit + 753 integration); the cash suites →
-  68 tests (unit rules 23, sessions 15, movements 21, concurrency 9), the concurrency suite green
+  `pytest tests/integration -q` → **800 passed** (270.20 s then 260.87 s, plus 280.29 s in a third
+  run without the serial-order pin), i.e. **1 377 passed** against the 1 301-test baseline of
+  `9d67582` (548 unit + 753 integration); the cash suites →
+  69 tests (unit rules 23, sessions 15, movements 22, concurrency 9), the concurrency suite green
   in four standalone runs; `tests/integration/test_accounting_multicurrency.py` → 32 passed with
   the amended counter-drawer tests and the new regression; fresh-database migration
   (`0001` → `0002_runtime_schema_revision`, head) on `nexus_ci_clean`; `schema_gate orm-db` MATCH
@@ -184,7 +197,7 @@ Notes:
   indexes), the non-negative cash trigger and the position views already exist in the approved
   Phase 0 schema, so `docs/database/schema.sql` and head revision `0002_runtime_schema_revision`
   are unchanged and no frozen migration was touched.
-* Phase 6 defects: `D6-1` … `D6-8` in `docs/phases/PHASE6_REPORT.md` §23 — the generated
+* Phase 6 defects: `D6-1` … `D6-10` in `docs/phases/PHASE6_REPORT.md` §23 — the generated
   movement-id read before `flush()` (a latent Phase 5 defect), the movement reversal that did not
   undo its journal entry (measured cash 1 000 / ledger 600 / drawer 600), the idempotency record
   that stored `+00:00` where the wire answered `Z`, a money-boundary validator that let
@@ -220,6 +233,8 @@ Each phase must, before it is declared complete:
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.12 | 2026-09-12 | Phase 6 verification round two: the refusal-shape defect `D6-10` found by the coverage step's slower interleaving is fixed (the storm test now asserts the contract's shape; a new deterministic test pins `NO_POSITION` on an emptied till) and the follow-up commit is **`f4f90e2`**. Whole gate sweep run **twice consecutively, exit 0** (577 unit + **800** integration = **1 377**, ruff/format/mypy clean, fresh migration, both schema gates MATCH, seeds 89/88/88, Phase 0 invariants ALL PASSED, hygiene scans clean, Phase 6 coverage 100 %/92.9 %/89.4 %/95.1 % against the 85 % floor). The follow-up commit is committed but **not yet pushed**: the sandbox's GitHub credentials expired mid-round (`gh api user` → *Bad credentials*), so `git push` and the PR #1 description update are pending a reconnect. Phase 6 stays **READY FOR REVIEW** and Phase 7–17 **NOT STARTED** |
+| 1.11 | 2026-09-12 | Phase 6 hygiene follow-up: the 18 `# noqa: S608` suppressions removed by rebuilding every cash statement from pure-literal prefixes (composed SQL proven token-identical), the suppression audit corrected in `PHASE6_REPORT.md` §27 with exact baseline-vs-head counts, coverage of the Phase 6 modules recorded with a greenlet-aware instrument, and the hygiene/coverage steps added to the local gate sweep. Phase 6 stays **READY FOR REVIEW** and Phase 7–17 **NOT STARTED** |
 | 1.10 | 2026-09-12 | Phase 6 finalisation: the implementation commit pinned as **`f8cece6`** with its exact diff stat (22 files, +9 215/−21) and its two green CI runs (`34677845254` push, `34677848307` pull request). Phase 5 stays **READY FOR REVIEW**, Phase 6 stays **READY FOR REVIEW** (not approved) and Phase 7–17 stay **NOT STARTED** |
 | 1.9 | 2026-09-12 | Phase 6 implementation + report: Phase 6 marked **READY FOR REVIEW** with `docs/phases/PHASE6_REPORT.md` (34 sections); the cash module (12 endpoints, 68 new tests), the `API_CONTRACT.md` §9.4 rewrite and the full verification (1 376 passed in two consecutive sweeps / ruff / mypy 97 files / migration / both schema gates / Phase 0 invariants / seeds 89-88-88) recorded, with the eight phase defects and the two behaviour confirmations. Phase 5 stays **READY FOR REVIEW** (not approved) and Phase 7–17 stay **NOT STARTED** |
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
