@@ -6,7 +6,7 @@
 | Phase | 5 — Exchange engine (roadmap: `docs/architecture/ROADMAP.md`) |
 | Status | **READY FOR REVIEW** (only the human reviewer may mark it APPROVED) |
 | Starting commit | `f0910b5` (Phase 4 finalisation — Gate Review fix `21b6211` plus its documentation commit; the frozen Phase 4 lineage) |
-| Implementation commit | *pinned in the finalisation commit of this phase* (visible in `git log`) |
+| Implementation commit | **`40945b19039054e79147d93ff5ac46c846bb7070`** (`40945b1`), *feat(exchange): complete phase 5 exchange engine* |
 | Branch | `arena/01a090c5-nexus-exchange-erp` |
 | Predecessor | [`PHASE4_REPORT.md`](PHASE4_REPORT.md) (accounting engine — the authoritative posting layer) |
 | Successor | Phase 6 (cash) — **not started, not authorised** |
@@ -70,10 +70,21 @@ fresh migrated database, and seeds idempotent (89 / 88 / 88).
 
 ## 4. Final commit
 
-The implementation, tests and this report are **one commit** on
-`arena/01a090c5-nexus-exchange-erp`; the documentation-only finalisation commit that follows it
-pins the hash and records the CI runs (the same pattern Phases 2–4 used). The exact hash, diff
-stat and CI run identifiers are recorded there and in `docs/PROJECT_STATUS.md` §1.
+The implementation, tests and documentation of this phase are **one commit** on
+`arena/01a090c5-nexus-exchange-erp`:
+
+| Field | Value |
+| --- | --- |
+| Commit | **`40945b19039054e79147d93ff5ac46c846bb7070`** (`40945b1`), *feat(exchange): complete phase 5 exchange engine* |
+| Parent | `f0910b5` — *docs(phase4): pin the Gate Review fix commit and record its CI runs* (the last Phase 4 commit) |
+| Contents | **24 files, +9 119/−46** — 10 production, 1 tooling, 10 test and 3 documentation files (`PHASE5_REPORT.md`, `PROJECT_STATUS.md`, `README.md`) |
+| Branch | `arena/01a090c5-nexus-exchange-erp` (pushed; pull request #1) |
+| CI (push) | run **`34667533980`** — `completed` / `success`, all six jobs `success` |
+| CI (pull request) | run **`34667536528`** — `completed` / `success`, all six jobs `success` |
+
+The hash is pinned here by the documentation-only finalisation commit that follows it (the same
+pattern Phases 2–4 used). No source file differs between the implementation commit and that
+finalisation commit.
 
 ## 5. Files created and modified
 
@@ -583,10 +594,18 @@ outcomes as before.
 
 ## 30. CI results
 
-Recorded in the finalisation commit and in `docs/PROJECT_STATUS.md` §1/§3: the push run and the
-pull-request run of the implementation commit, all six jobs, with every step of *Integration
-tests and schema gates* green (pytest integration, migration on a clean database, both schema
-gates, seed idempotency, Phase 0 invariants) and the compose job's acceptance steps green.
+| Field | Value |
+| --- | --- |
+| Commit | `40945b1` (`40945b19039054e79147d93ff5ac46c846bb7070`) |
+| Push run | **`34667533980`** — `completed` / `success` |
+| Pull-request run | **`34667536528`** — `completed` / `success` |
+| Jobs (both runs) | *Lint (ruff)*, *Type check (mypy)*, *Unit tests*, *OpenAPI document*, *Integration tests and schema gates*, *Compose stack (PART 44 acceptance)* — **all `success`**, no failing step |
+
+The *Integration tests and schema gates* job runs the same gates this report reproduces locally
+(pytest integration on PostgreSQL 16 and Redis 7.4, migration on a clean database, both schema
+gates, seeds three ways, the Phase 0 invariant suite), and the compose job builds and starts the
+real five-service stack, migrates and seeds it through `docker compose exec`, logs in through
+nginx and registers the worker — the acceptance the sandbox cannot run (limitation L5-3).
 
 ## 31. Limitations
 
