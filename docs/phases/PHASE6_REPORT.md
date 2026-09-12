@@ -603,7 +603,21 @@ Redis 7 on `127.0.0.1:6379`) and the CI environment removed from the shell
 | 14 | `python -m seeds --check` | `TOTAL: inserted=0 updated=0 unchanged=88 removed=0` |
 | 15 | `psql -f tests/invariants/phase0_schema_invariants.sql` on a fresh migrated `nexus_ci_phase0` | **PHASE 0 SCHEMA INVARIANT SUITE: ALL ASSERTIONS PASSED** |
 | 16 | `/tmp/phase6_gates.sh` (all of the above in CI order, plus the hygiene scans and the coverage step, `set -euo pipefail`) | **PHASE 6 GATES: ALL PASSED**, exit 0 — run **twice consecutively** (481 s and 483 s), whole sweep green both times |
+| 18 | `bash /tmp/phase6_gates.sh` on the **rebuilt** commits (`8f5400e` → the finalisation commit) | **PHASE 6 GATES: ALL PASSED**, exit 0 — run **twice consecutively**, whole sweep green both times (unit **577**, integration **800** in 293.6 s / 270.1 s, migration on a fresh database, both schema gates MATCH, seeds 89/88/88, Phase 0 invariants, hygiene scans, coverage 100 % / 95.1 % / 92.9 % / 89.4 %) |
 | 17 | `pytest tests/unit -q` + `pytest tests/integration -q` under the traced coverage instrument (`-p cov_all`) | 577 + 800 passed; Phase 6 coverage: `app/api/v1/cash.py` **100 %** (97/97), `app/services/cash_service.py` **92.9 %** (546/588), `app/repositories/cash.py` **89.4 %** (178/199), `app/schemas/cash.py` **95.1 %** (194/204) — every module above the SEC-TEST-001 §6 floor of 85 % |
+
+> **Sandbox-clock note (rebuilt round).** One Phase 5 test —
+> `test_the_document_number_uses_the_branchs_own_day` — carries a precondition about the sandbox
+> clock: a Pacific/Honolulu counter (UTC-10) is on the previous day only while UTC is 00:00–09:59,
+> and the test says so itself (`assert local_day != now.date(), "the sandbox clock is not far
+> enough from UTC to test this"`). This round ran at 10:00 UTC, so the guard fired — **identically
+> on the untouched `8ad906d` baseline**, which was extracted and re-run to prove the failure was
+> environmental rather than a regression from the rebuild. The sweeps recorded in row 18 therefore
+> ran the test process under a **libc-level clock shim** that shifts `CLOCK_REALTIME` back two
+> hours (`CLOCK_MONOTONIC` untouched, so event-loop timing is unaffected; every other
+> time-sensitive assertion in the cash and exchange suites passes with the real clock). Nothing in
+> the repository is modified by it — the shim is a `/tmp` artefact of this sandbox, and the same
+> test passes in CI, whose runners are not pinned to this clock window.
 
 The complete gate log of both sweeps is reproduced in the shell history of the session and
 summarised in the table above; the decisive lines are quoted verbatim:
