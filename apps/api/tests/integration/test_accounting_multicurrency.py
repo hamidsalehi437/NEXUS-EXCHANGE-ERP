@@ -35,6 +35,7 @@ from tests.accounting_helpers import (
     World,
     build_world,
     count,
+    fund_drawer,
     ledger_rows,
     line,
     publish_rate,
@@ -274,6 +275,11 @@ class TestExchangePosting:
         world = build_world(api_client, admin_headers, main_database, quotes=True)
 
         async def scenario(service):
+            # The payout leg is real money: the branch buys 1,000 USD with 69,500 AFN, so the
+            # drawer has to hold the afghanis the guard reads (§11).
+            await fund_drawer(
+                service, world, account_key="cash_afn", currency_code="AFN", amount="70000"
+            )
             return await service.post_exchange(
                 transaction_type="BUY",
                 reference_id=uuid.uuid4(),
@@ -977,6 +983,9 @@ class TestRateProvenanceAndHistory:
         )[0]
 
         async def scenario(service):
+            await fund_drawer(
+                service, world, account_key="cash_afn", currency_code="AFN", amount="7000"
+            )
             return await service.post_exchange(
                 transaction_type="BUY",
                 reference_id=uuid.uuid4(),

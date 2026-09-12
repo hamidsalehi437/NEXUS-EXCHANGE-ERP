@@ -244,10 +244,15 @@ def provisioned_device(api_client: TestClient, admin_headers: dict[str, str], br
     installations are provisioned by an administrator, which is the documented process.
     """
 
-    def _provision(platform: str = "WINDOWS") -> str:
+    def _provision(platform: str = "WINDOWS", assigned_branch: str | None = None) -> str:
         from tests.auth_helpers import register_device
 
-        device = register_device(api_client, admin_headers, branch_id=branch_id, platform=platform)
+        device = register_device(
+            api_client,
+            admin_headers,
+            branch_id=assigned_branch or branch_id,
+            platform=platform,
+        )
         return str(device["device_uuid"])
 
     return _provision
@@ -331,6 +336,63 @@ def limited_admin_role(main_database: str) -> str:
         name=name,
     )
     return name
+
+
+@pytest.fixture
+def exchange_world(
+    api_client: TestClient, admin_headers: dict[str, str], main_database: str
+) -> Iterator[object]:
+    """A Phase 5 counter: its **own** branch, with its own branch-bound drawers.
+
+    Each scenario gets a fresh branch, so a position assertion can be absolute
+    (``5,000,000 - 69,500``) instead of a delta against whatever another test left behind —
+    and the branch is deactivated at teardown, because a login resolves a device's branch
+    automatically only while exactly one branch is active.
+    """
+    from tests.exchange_helpers import build_world, retire
+
+    world = build_world(api_client, admin_headers, main_database)
+    yield world
+    retire(api_client, admin_headers, world)
+
+
+@pytest.fixture
+def funded_counter(exchange_world: object) -> object:
+    """The scenario's counter with the drawers funded (real opening postings, model §6.1)."""
+    exchange_world.fund_all()  # type: ignore[attr-defined]
+    return exchange_world
+
+
+@pytest.fixture
+def quoted_counter(
+    funded_counter: object, api_client: TestClient, admin_headers: dict[str, str]
+) -> object:
+    """The funded counter, with the house quote USD/AFN (buy 70, sell 71) in force."""
+    funded_counter.quote(api_client, admin_headers)  # type: ignore[attr-defined]
+    return funded_counter
+
+
+@pytest.fixture
+def http_counter(
+    exchange_world: object, api_client: TestClient, admin_headers: dict[str, str]
+) -> object:
+    """A Phase 5 counter a test can reach over HTTP: its own branch, its own device, a session.
+
+    The branch is the scenario's own (created through ``POST /branches`` for this test), and the
+    session is a device provisioned for *that* branch, so the endpoint sees a counter that
+    exists rather than one assembled from another suite's leftovers. That matters for
+    correctness, not convenience: the engine refuses to pick between several candidate drawers
+    for one currency at one branch (``AMBIGUOUS_CASH_ACCOUNT``), and a branch shared with every
+    other test in the session accumulates one asset account per scenario. A test asserting the
+    HTTP contract has to trade out of a counter whose till is unambiguous.
+    """
+    from tests.exchange_helpers import attach_session
+
+    world = exchange_world
+    attach_session(world, api_client, admin_headers)  # type: ignore[arg-type]
+    world.fund_all()  # type: ignore[attr-defined]
+    world.quote(api_client, admin_headers)  # type: ignore[attr-defined]
+    return world
 
 
 @pytest.fixture(scope="session")

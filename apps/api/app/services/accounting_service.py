@@ -47,11 +47,12 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, NoReturn, cast
 
+from sqlalchemy import select
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,6 +101,7 @@ from app.core.money import (
 )
 from app.core.permissions import GROUP_WIDE_ROLES, Permission
 from app.models.account import Account
+from app.models.cash import CashMovement
 from app.models.currency import Currency
 from app.models.journal import JournalEntry, JournalLine
 from app.repositories.ledger import JournalEntryRepository, LedgerRepository
@@ -133,6 +135,17 @@ REVERSAL_AUTHORITY: dict[str, Permission] = {
     "TRANSFER": Permission.TRANSFERS_CANCEL,
     "MANUAL_ADJUSTMENT": Permission.ACCOUNTS_MANAGE,
     "OPENING_BALANCE": Permission.ACCOUNTS_MANAGE,
+}
+
+# Some documents have two undo doors, and RBAC gives them different permissions: an
+# accountant may cancel an exchange but may not reverse one (``ACCOUNTANT`` holds
+# ``exchange.cancel`` without ``exchange.reverse``). The default above is the reversal door;
+# a document service that is performing its *cancellation* names that door explicitly, and
+# the ledger then checks the permission the caller actually claimed. The set is closed per
+# reference type, so a caller can choose between the authorities the contract grants for
+# that document and nothing else.
+REVERSAL_AUTHORITY_CHOICES: dict[str, frozenset[Permission]] = {
+    "EXCHANGE_TRANSACTION": frozenset({Permission.EXCHANGE_REVERSE, Permission.EXCHANGE_CANCEL}),
 }
 
 # A single entry may not reference itself (the frozen CHECK also says so).
@@ -193,6 +206,52 @@ class PostingTotals:
     @property
     def is_balanced(self) -> bool:
         return self.difference == 0
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeComputation:
+    """The arithmetic of one exchange deal, computed once for both doors.
+
+    ``gross_amount`` is ``from_amount x exchange_rate`` expressed in the deal's *to*
+    currency, ``settlement_amount`` is what actually moves on that side (the payout after
+    the commission for a BUY, the full receipt for a SELL — ``ACCOUNTING_MODEL.md`` §6.2,
+    §6.3). The document service stores the same numbers the ledger posts, because both
+    call :func:`compute_exchange_amounts`.
+    """
+
+    transaction_type: str
+    from_amount: Decimal
+    exchange_rate: Decimal
+    commission: Decimal
+    gross_amount: Decimal
+    settlement_amount: Decimal
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "transaction_type": self.transaction_type,
+            "from_amount": format_decimal(self.from_amount),
+            "exchange_rate": format_decimal(self.exchange_rate),
+            "commission": format_decimal(self.commission),
+            "gross_amount": format_decimal(self.gross_amount),
+            "settlement_amount": format_decimal(self.settlement_amount),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CashMovementSpec:
+    """One physical cash movement a business document produces.
+
+    ``amount`` is a **quantity** of ``currency_id`` (never a functional value): it is what a
+    cashier counts, and it is what the ``ct_cash_movements_non_negative`` constraint sums
+    (``ACCOUNTING_MODEL.md`` §2, §6).
+    """
+
+    account_id: uuid.UUID
+    currency_id: uuid.UUID
+    movement_type: str
+    amount: Decimal
+    description: str | None = None
+    adjustment_sign: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,6 +648,349 @@ class AccountingService:
             )
             raise refusal from exc
 
+    # ================================================== document-service interface
+    # Everything below exists so a document service (Phase 5's exchange engine, Phase 6's
+    # cash module) can orchestrate a business document **through** the ledger instead of
+    # beside it: one transaction boundary, one scope rule, one writer of financial and
+    # physical rows. Nothing here is a second posting path — `_post` remains the only
+    # place an entry is inserted.
+    def document_transaction(self) -> AbstractAsyncContextManager[AsyncSession]:
+        """The ledger's posting transaction, for the service that owns a document.
+
+        Same transaction manager, same translation of the database's refusals, but the
+        *caller* owns the boundary: a document row, its journal entry, its cash movements
+        and its audit rows become visible together (PART 20) or not at all.
+        """
+        return self._ledger_transaction()
+
+    async def assert_branch_scope(
+        self,
+        actor: ActorContext,
+        *,
+        branch_id: uuid.UUID | None,
+        context: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Public form of the posting scope guard (one implementation, one audit trail)."""
+        await self._assert_scope(actor, branch_id=branch_id, context=context)
+
+    async def branch_scope_filter(
+        self, actor: ActorContext, *, branch_id: uuid.UUID | None = None
+    ) -> list[uuid.UUID] | None:
+        """Public form of the read scope (``None`` = every branch, ``[]`` = none)."""
+        return await self._read_scope(actor, branch_id=branch_id)
+
+    def branch_in_scope(self, actor: ActorContext, branch_id: uuid.UUID | None) -> bool:
+        """Whether one row's branch is inside the actor's scope (point reads/writes)."""
+        return self._can_see_branch(actor, branch_id)
+
+    def accounting_date(self, value: dt.datetime | None) -> dt.datetime:
+        """The document's accounting date: UTC, back-dating allowed, the future refused.
+
+        The rule is the ledger's own (:func:`_accounting_date`), exposed so a document
+        service dates its row and its entry identically — a document stamped "tomorrow"
+        beside an entry stamped "today" is the kind of drift an auditor finds years later.
+        """
+        return _accounting_date(value, self._settings)
+
+    async def resolve_exchange_currencies(
+        self,
+        session: AsyncSession,
+        *,
+        transaction_type: str,
+        from_currency_id: uuid.UUID,
+        to_currency_id: uuid.UUID,
+    ) -> tuple[Currency, Currency, Currency]:
+        """The two sides of a deal and the functional currency, with the direction checked.
+
+        Returns ``(from_currency, to_currency, functional_currency)``. The refusals are the
+        ledger's own and happen *here*, before the document service looks up a rate: a
+        missing currency (404), an inactive one (422 ``CURRENCY_INACTIVE``), the same
+        currency on both sides or the functional currency on the delivered side
+        (422 ``EXCHANGE_DIRECTION_INVALID``). A deal that cannot exist therefore never
+        reaches rate resolution, amount computation or posting (Phase 5 §5), and the rule
+        stays single-sourced in ``_assert_exchange_direction`` rather than being restated
+        by every caller that wants to validate a deal early.
+        """
+        currency_type = _transaction_type(transaction_type)
+        currencies = CurrencyRepository(session)
+        from_currency = await _require_currency(currencies, from_currency_id, "from_currency_id")
+        to_currency = await _require_currency(currencies, to_currency_id, "to_currency_id")
+        base = await _require_base_currency(session)
+        _assert_exchange_direction(
+            transaction_type=currency_type,
+            from_currency=from_currency,
+            to_currency=to_currency,
+            base=base,
+        )
+        return from_currency, to_currency, base
+
+    async def inventory_account(
+        self, session: AsyncSession, *, branch_id: uuid.UUID, currency_id: uuid.UUID
+    ) -> Account:
+        """The branch's drawer for one currency: its **inventory account** (§2).
+
+        An inventory account is an active, postable ``ASSET`` account bound to the currency
+        — the only kind of account that holds a position. Which of the chart's asset
+        accounts *is* the drawer is answered in a fixed order, because a branch must always
+        trade out of the same till:
+
+        1. the branch's **own** account for the currency (``accounts.branch_id`` — §10: a
+           branch can never spend another branch's cash);
+        2. failing that, the group-wide account in the **inventory band** the accounting
+           model reserves for cash (``1000`` to ``1099``, §5);
+        3. failing that, the single group-wide asset account bound to the currency.
+
+        A step that finds more than one candidate refuses (``AMBIGUOUS_CASH_ACCOUNT``)
+        rather than choosing: silently posting a branch's cash into one of two drawers
+        would make the till disagree with the ledger, and the chart is a one-minute fix.
+        The refusal names the currency, the branch and the candidate codes.
+        """
+        candidates = [
+            row
+            for row in (
+                (
+                    await session.execute(
+                        select(Account)
+                        .where(
+                            Account.account_type == "ASSET",
+                            Account.currency_id == currency_id,
+                            Account.is_active.is_(True),
+                            Account.is_postable.is_(True),
+                        )
+                        .order_by(Account.code)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if row.branch_id in (None, branch_id)
+        ]
+        if not candidates:
+            raise ValidationError(
+                "This branch has no cash account for that currency, so the deal cannot move cash.",
+                details={
+                    "fields": [{"field": "currency_id", "code": "no_cash_account"}],
+                    "branch_id": str(branch_id),
+                    "currency_id": str(currency_id),
+                    "hint": (
+                        "Create an active, postable ASSET account bound to this currency, "
+                        "group-wide or for this branch."
+                    ),
+                },
+            )
+        # Step 1 then step 2, in one expression: the branch's own drawer first, then the
+        # group-wide account in the cash band. Step 3 is the fallback below.
+        chosen_pool: list[Account] = [row for row in candidates if row.branch_id == branch_id] or [
+            row for row in candidates if _in_inventory_band(row.code)
+        ]
+        chosen_pool = chosen_pool or candidates
+        if len(chosen_pool) > 1:
+            raise DataIntegrityError(
+                "More than one cash account can hold this currency at this branch.",
+                details={
+                    "reason": "AMBIGUOUS_CASH_ACCOUNT",
+                    "branch_id": str(branch_id),
+                    "currency_id": str(currency_id),
+                    "candidate_codes": [row.code for row in chosen_pool],
+                    "hint": (
+                        "Keep one inventory account per currency per branch: bind the "
+                        "branch's own account, or leave a single account in the "
+                        "1000-1099 cash band."
+                    ),
+                },
+            )
+        return chosen_pool[0]
+
+    async def record_cash_movements(
+        self,
+        session: AsyncSession,
+        *,
+        reference_type: str,
+        reference_id: uuid.UUID,
+        branch_id: uuid.UUID,
+        movements: Sequence[CashMovementSpec],
+        actor: ActorContext,
+        journal_entry_id: uuid.UUID | None = None,
+        cash_session_id: uuid.UUID | None = None,
+        device_id: uuid.UUID | None = None,
+        client_event_id: uuid.UUID | None = None,
+        allow_inactive_branch: bool = False,
+    ) -> list[uuid.UUID]:
+        """Write the physical side of a business document (``cash_movements``).
+
+        The ledger records what the books say; this table records what the drawer holds, and
+        the two are reconciled through the signed amount (``ACCOUNTING_MODEL.md`` §2, §8).
+        A document service must write both, in one transaction, or the reconciliation stops
+        meaning anything — which is why the write lives here, next to the entry it belongs
+        to, instead of in each document service.
+
+        What this method does **not** do is decide whether a position is sufficient:
+        ``ct_cash_movements_non_negative`` (``NEX01``) is the authority and is deferred to
+        COMMIT precisely so a document may write both legs of a movement before anyone
+        judges the total.
+
+        The ledger's own disposal guard (``_carrying_rate``) has already read the position
+        under the account lock by the time a document gets here, so a shortfall is normally
+        refused with its domain error and ``NEX01`` remains the database's independent
+        backstop.
+
+        ``allow_inactive_branch`` exists for the same reason the ledger exempts reversals
+        from its "no postings at a closed branch" rule: retiring a branch must not make its
+        history uncorrectable, and a correction at a closed branch is still a correction.
+        """
+        if actor.user_id is None:
+            raise PermissionDeniedError(
+                "A cash movement must name the user who recorded it.",
+                details={"reason": "ACTOR_REQUIRED"},
+            )
+        if not movements:
+            raise ValidationError(
+                "A document that moves cash must state at least one movement.",
+                details={"reason": "NO_MOVEMENTS"},
+            )
+        branch = await BranchRepository(session).get(branch_id)
+        if branch is None:
+            raise ResourceNotFoundError(
+                "That branch does not exist.",
+                details={"fields": [{"field": "branch_id", "code": "not_found"}]},
+            )
+        if not branch.is_active and reference_type != "REVERSAL" and not allow_inactive_branch:
+            raise ValidationError(
+                "A closed branch cannot record new cash movements.",
+                details={"fields": [{"field": "branch_id", "code": "inactive"}]},
+            )
+
+        accounts: dict[uuid.UUID, Account] = {}
+        currencies: dict[uuid.UUID, Currency] = {}
+        rows: list[uuid.UUID] = []
+        for index, movement in enumerate(movements):
+            if movement.movement_type not in (*CASH_MOVEMENT_TYPES, "EXPENSE", "CLOSING"):
+                raise ValidationError(
+                    "That is not a cash movement type.",
+                    details={
+                        "fields": [
+                            {"field": f"movements[{index}].movement_type", "code": "unsupported"}
+                        ],
+                        "movement_type": movement.movement_type,
+                    },
+                )
+            account = accounts.get(movement.account_id)
+            if account is None:
+                loaded = await AccountRepository(session).get(movement.account_id)
+                if loaded is not None:
+                    accounts[movement.account_id] = loaded
+                account = loaded
+            if account is None:
+                raise ResourceNotFoundError(
+                    "That account does not exist.",
+                    details={
+                        "fields": [{"field": f"movements[{index}].account_id", "code": "not_found"}]
+                    },
+                )
+            if not account.is_active or not account.is_postable:
+                raise ValidationError(
+                    "A cash movement needs an active, postable account.",
+                    details={
+                        "fields": [
+                            {"field": f"movements[{index}].account_id", "code": "not_postable"}
+                        ]
+                    },
+                )
+            if account.currency_id is not None and account.currency_id != movement.currency_id:
+                raise ValidationError(
+                    "The movement's currency is not the account's currency.",
+                    details={
+                        "fields": [
+                            {
+                                "field": f"movements[{index}].currency_id",
+                                "code": "currency_mismatch",
+                            }
+                        ],
+                        "account_currency_id": str(account.currency_id),
+                    },
+                )
+            if account.branch_id is not None and account.branch_id != branch_id:
+                raise ValidationError(
+                    "That account belongs to another branch.",
+                    details={
+                        "fields": [
+                            {"field": f"movements[{index}].account_id", "code": "branch_mismatch"}
+                        ],
+                        "account_branch_id": str(account.branch_id),
+                    },
+                )
+            currency = currencies.get(movement.currency_id)
+            if currency is None:
+                loaded_currency = await CurrencyRepository(session).get(movement.currency_id)
+                if loaded_currency is not None:
+                    currencies[movement.currency_id] = loaded_currency
+                currency = loaded_currency
+            if currency is None:
+                raise ResourceNotFoundError(
+                    "That currency does not exist.",
+                    details={
+                        "fields": [
+                            {"field": f"movements[{index}].currency_id", "code": "not_found"}
+                        ]
+                    },
+                )
+            amount = _non_negative(movement.amount, field=f"movements[{index}].amount")
+            if amount != quantize_money(amount, currency.decimal_places):
+                raise ValidationError(
+                    "The movement cannot be expressed in the currency's smallest unit.",
+                    details={
+                        "fields": [
+                            {
+                                "field": f"movements[{index}].amount",
+                                "code": "below_smallest_unit",
+                            }
+                        ],
+                        "currency_code": currency.code,
+                        "decimal_places": currency.decimal_places,
+                    },
+                )
+            if movement.movement_type == "ADJUSTMENT" and movement.adjustment_sign not in (-1, 1):
+                raise ValidationError(
+                    "An adjustment must state its direction.",
+                    details={
+                        "fields": [
+                            {
+                                "field": f"movements[{index}].adjustment_sign",
+                                "code": "required",
+                            }
+                        ]
+                    },
+                )
+            if movement.movement_type != "ADJUSTMENT" and movement.adjustment_sign is not None:
+                raise ValidationError(
+                    "Only an adjustment carries a direction sign.",
+                    details={
+                        "fields": [
+                            {"field": f"movements[{index}].adjustment_sign", "code": "unexpected"}
+                        ]
+                    },
+                )
+            row = CashMovement(
+                branch_id=branch_id,
+                account_id=movement.account_id,
+                currency_id=movement.currency_id,
+                movement_type=movement.movement_type,
+                amount=amount,
+                reference_type=reference_type,
+                reference_id=reference_id,
+                description=movement.description,
+                created_by=actor.user_id,
+                adjustment_sign=movement.adjustment_sign,
+                cash_session_id=cash_session_id,
+                device_id=device_id or actor.device_id,
+                journal_entry_id=journal_entry_id,
+                client_event_id=client_event_id,
+            )
+            session.add(row)
+            rows.append(row.id)
+        await session.flush()
+        return rows
+
     # =============================================================== validation
     async def _lock_accounts(self, session: AsyncSession, *account_ids: uuid.UUID | None) -> None:
         """Take the per-account posting lock, before anything is decided from a balance.
@@ -838,31 +1240,18 @@ class AccountingService:
                 at=moment,
                 receiving=transaction_type == "SELL",
             )
-            gross_to = multiply_money(amount_from, gross_rate, scale=to_currency.decimal_places)
-            if gross_to <= 0:
-                raise ValidationError(
-                    "The applied rate produces no target amount to move.",
-                    details={"fields": [{"field": "exchange_rate", "code": "zero_result"}]},
-                )
-            to_amount = (
-                money_difference(gross_to, commission_amount, scale=to_currency.decimal_places)
-                if transaction_type == "BUY"
-                else gross_to
-            )
-            if to_amount <= 0:
-                raise ValidationError(
-                    "The commission is not smaller than the amount the customer receives.",
-                    details={
-                        "fields": [{"field": "commission", "code": "exceeds_gross"}],
-                        "gross_to_amount": format_decimal(gross_to),
-                    },
-                )
-            _assert_cash_quantity(
-                amount=to_amount,
-                currency=to_currency,
-                field="to_amount",
+            # The deal's arithmetic lives in one place (`compute_exchange_amounts`), so the
+            # document service that orchestrates an exchange stores exactly the numbers the
+            # ledger posts — there is no second formula to drift.
+            computation = compute_exchange_amounts(
                 transaction_type=transaction_type,
+                from_amount=amount_from,
+                exchange_rate=gross_rate,
+                commission=commission_amount,
+                from_decimal_places=from_currency.decimal_places,
+                to_decimal_places=to_currency.decimal_places,
             )
+            to_amount = computation.settlement_amount
 
             if transaction_type == "BUY":
                 # ``ACCOUNTING_MODEL.md`` §6.2: the acquired currency enters the books at
@@ -1192,6 +1581,7 @@ class AccountingService:
         idempotency_key: uuid.UUID | None = None,
         endpoint: str | None = ENDPOINT_LEDGER_POSTING,
         session: AsyncSession | None = None,
+        authority: Permission | None = None,
     ) -> JournalEntryView:
         """Reverse a posted entry: a mirror entry, never a deletion (PART 22).
 
@@ -1245,7 +1635,9 @@ class AccountingService:
                     },
                 )
 
-            authority = REVERSAL_AUTHORITY.get(original.reference_type, Permission.ACCOUNTS_MANAGE)
+            authority = self._reversal_authority(
+                reference_type=original.reference_type, requested=authority
+            )
             await self._authorize_permission(
                 actor,
                 permission=authority,
@@ -1331,6 +1723,7 @@ class AccountingService:
         device_id: uuid.UUID | None = None,
         idempotency_key: uuid.UUID | None = None,
         endpoint: str | None = ENDPOINT_LEDGER_POSTING,
+        authority: Permission | None = None,
     ) -> JournalEntryView:
         """Reverse the journal of one business document, identified by its reference.
 
@@ -1372,6 +1765,7 @@ class AccountingService:
             idempotency_key=idempotency_key,
             endpoint=endpoint,
             session=session,
+            authority=authority,
         )
 
     # ================================================================== reading
@@ -1930,13 +2324,31 @@ class AccountingService:
         (``NEX01``) would refuse the matching cash row at commit, but the ledger door is
         the one every caller walks through, so it refuses first and explains why.
         """
-        if currency_id == base_currency_id:
-            return Decimal(1)
         position = await LedgerRepository(session).position(
             account_id=account_id, branch_id=branch_id
         )
         quantity = Decimal(position["foreign_quantity"])
         value = Decimal(position["functional_balance"])
+        if currency_id == base_currency_id:
+            # The functional currency carries at 1 by definition, so there is no rate to
+            # derive — but the *quantity* still has to be there. A drawer that holds 500
+            # afghani cannot pay out 700, and until this guard existed that delivery was
+            # only stopped by ``ct_cash_movements_non_negative`` (``NEX01``) at COMMIT,
+            # which reaches the caller as a server error instead of the 409 an operator can
+            # act on. The foreign branch below has always refused this; the functional
+            # branch now refuses it the same way, from the same locked read.
+            if disposing_quantity is not None and disposing_quantity > quantity:
+                raise InsufficientBalanceError(
+                    "This branch does not hold that much of the currency being delivered.",
+                    details={
+                        "account_id": str(account_id),
+                        "disposing_quantity": format_decimal(disposing_quantity),
+                        "foreign_quantity": format_decimal(quantity),
+                        "shortfall": format_decimal(money_difference(disposing_quantity, quantity)),
+                        "reason": "QUANTITY_EXCEEDED",
+                    },
+                )
+            return Decimal(1)
         if quantity <= 0:
             raise InsufficientBalanceError(
                 "This branch holds no position to deliver from.",
@@ -2063,6 +2475,32 @@ class AccountingService:
         await self._authorize_permission(
             actor, permission=permission, context={"reference_type": reference_type}
         )
+
+    @staticmethod
+    def _reversal_authority(*, reference_type: str, requested: Permission | None) -> Permission:
+        """Which permission authorises undoing an entry of this kind.
+
+        Without ``requested`` this is the contract's default door for the document type. A
+        caller may instead name one of the doors the document actually has (see
+        ``REVERSAL_AUTHORITY_CHOICES``); naming anything else is a defect in the caller, not
+        a shortcut — the ledger still checks the permission against the actor, so this
+        cannot widen anyone's authority, only keep a cancellation from demanding the
+        reversal permission.
+        """
+        default = REVERSAL_AUTHORITY.get(reference_type, Permission.ACCOUNTS_MANAGE)
+        if requested is None:
+            return default
+        allowed = REVERSAL_AUTHORITY_CHOICES.get(reference_type, frozenset({default}))
+        if requested not in allowed:
+            raise ValidationError(
+                "That permission cannot authorise undoing this document.",
+                details={
+                    "reference_type": reference_type,
+                    "requested_permission": str(requested),
+                    "allowed_permissions": sorted(str(item) for item in allowed),
+                },
+            )
+        return requested
 
     async def _authorize_permission(
         self,
@@ -2269,6 +2707,101 @@ def _non_negative(value: Decimal, *, field: str) -> Decimal:
             details={"fields": [{"field": field, "code": "negative"}]},
         )
     return amount
+
+
+def _in_inventory_band(code: str) -> bool:
+    """Whether an account code sits in the chart's cash-inventory band (§5).
+
+    The seeded chart gives the base currency ``1000`` and every other currency the next
+    code in the band, while ``1100`` *Cash in Transit* and ``1200`` *Customer Receivable*
+    sit above it: two asset accounts bound to the same currency are only distinguishable
+    by that convention, so the convention is stated once, here, instead of being guessed
+    at each call site.
+    """
+    candidate = code.strip()
+    return len(candidate) == 4 and candidate.isdigit() and 1000 <= int(candidate) <= 1099
+
+
+def compute_exchange_amounts(
+    *,
+    transaction_type: str,
+    from_amount: Decimal,
+    exchange_rate: Decimal,
+    commission: Decimal,
+    from_decimal_places: int,
+    to_decimal_places: int,
+) -> ExchangeComputation:
+    """The arithmetic of one exchange deal, validated (``ACCOUNTING_MODEL.md`` §6.2, §6.3).
+
+    ``gross = from_amount x exchange_rate`` and the settlement is the *to*-side amount that
+    actually moves: for a **BUY** the house keeps the commission out of the payout
+    (``gross - commission``), for a **SELL** the customer pays the full receipt and the
+    commission is recognized inside it (``gross``). The two cases differ in who ends up
+    holding the fee, never in what is counted.
+
+    Refusals are the ones a counter operator must be able to act on, and each names the
+    field it belongs to: an amount or rate that is not positive, an amount finer than the
+    currency's smallest unit, a rate so small it produces nothing, and a commission that is
+    not smaller than the gross it is charged on (a fee that swallows the deal is not a fee,
+    and the ledger would have to invent an entry to balance it).
+    """
+    if transaction_type not in EXCHANGE_TRANSACTION_TYPES:
+        raise ValidationError(
+            "An exchange is a BUY or a SELL.",
+            details={
+                "fields": [{"field": "transaction_type", "code": "unsupported"}],
+                "transaction_type": transaction_type,
+            },
+        )
+    amount_from = _positive(from_amount, field="from_amount")
+    rate = _positive(exchange_rate, field="exchange_rate")
+    fee = _non_negative(commission, field="commission")
+
+    if amount_from != quantize_money(amount_from, from_decimal_places):
+        raise ValidationError(
+            "The amount cannot be expressed in the currency's smallest unit.",
+            details={
+                "fields": [{"field": "from_amount", "code": "below_smallest_unit"}],
+                "decimal_places": from_decimal_places,
+            },
+        )
+
+    gross = multiply_money(amount_from, rate, scale=to_decimal_places)
+    if gross <= 0:
+        raise ValidationError(
+            "The applied rate produces no target amount to move.",
+            details={"fields": [{"field": "exchange_rate", "code": "zero_result"}]},
+        )
+    if fee >= gross:
+        raise ValidationError(
+            "The commission is not smaller than the amount the customer pays.",
+            details={
+                "fields": [{"field": "commission", "code": "exceeds_gross"}],
+                "gross_to_amount": format_decimal(gross),
+                "commission": format_decimal(fee),
+            },
+        )
+    settlement = (
+        money_difference(gross, fee, scale=to_decimal_places)
+        if transaction_type == "BUY"
+        else gross
+    )
+    if settlement != quantize_money(settlement, to_decimal_places):
+        raise ValidationError(
+            "The settled amount cannot be expressed in the currency's smallest unit.",
+            details={
+                "fields": [{"field": "to_amount", "code": "below_smallest_unit"}],
+                "decimal_places": to_decimal_places,
+            },
+        )
+    return ExchangeComputation(
+        transaction_type=transaction_type,
+        from_amount=amount_from,
+        exchange_rate=rate,
+        commission=fee,
+        gross_amount=gross,
+        settlement_amount=settlement,
+    )
 
 
 def _assert_exchange_direction(

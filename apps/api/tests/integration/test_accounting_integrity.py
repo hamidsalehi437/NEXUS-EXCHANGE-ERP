@@ -37,6 +37,7 @@ from tests.accounting_helpers import (
     World,
     build_world,
     count,
+    fund_drawer,
     line,
     publish_rate,
     read,
@@ -639,6 +640,12 @@ class TestMoneyPrecisionAtTheEdges:
         world = build_world(api_client, admin_headers, main_database, quotes=True)
 
         async def scenario(service):
+            # The branch pays the customer in afghanis, so it has to hold them first: the
+            # inventory guard reads the branch's own position (§11), and 1 USD at that rate
+            # pays out just over 70 AFN.
+            await fund_drawer(
+                service, world, account_key="cash_afn", currency_code="AFN", amount="100"
+            )
             return await service.post_exchange(
                 transaction_type="BUY",
                 reference_id=uuid.uuid4(),

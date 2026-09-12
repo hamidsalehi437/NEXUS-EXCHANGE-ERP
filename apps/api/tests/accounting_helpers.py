@@ -225,6 +225,32 @@ def actor_for(
     )
 
 
+async def fund_drawer(
+    service: AccountingService,
+    world: World,
+    *,
+    account_key: str,
+    currency_code: str,
+    amount: str,
+) -> None:
+    """Put real cash into a drawer: an opening movement (``IN``) against the capital account.
+
+    A posting that pays cash out needs cash to pay out: the exchange's inventory guard reads
+    the branch's own position, so a scenario asserting the *arithmetic* of a payout funds the
+    drawer first instead of posting money the branch does not hold (§11).
+    """
+    await service.post_cash_movement(
+        movement_type="IN",
+        reference_id=uuid.uuid4(),
+        branch_id=world.branch_id,
+        cash_account_id=world.account(account_key),
+        counter_account_id=world.account("capital"),
+        currency_id=world.money(currency_code).id,
+        amount=Decimal(amount),
+        actor=world.head_actor,
+    )
+
+
 def create_currency(
     client: TestClient,
     headers: Mapping[str, str],

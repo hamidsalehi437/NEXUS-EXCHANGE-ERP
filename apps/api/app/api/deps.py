@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Annotated, cast
 
-from fastapi import Depends, Request, status
+from fastapi import Depends, Header, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,10 +37,12 @@ from app.core.exceptions import (
     AuthenticationError,
     DeviceMismatchError,
     DeviceRevokedError,
+    IdempotencyKeyRequiredError,
     PermissionDeniedError,
     ServiceUnavailableError,
     TokenInvalidError,
     TokenRevokedError,
+    ValidationError,
 )
 from app.core.logging import get_logger
 from app.core.permissions import Permission, permission_hash
@@ -377,6 +379,33 @@ def require_permission(
     return _dependency
 
 
+# The header a money-moving request must carry (PART 40). Named once: the store's scope,
+# the CORS allow-list and this dependency must agree on the spelling.
+IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+
+
+async def require_idempotency_key(
+    idempotency_key: Annotated[str | None, Header(alias=IDEMPOTENCY_KEY_HEADER)] = None,
+) -> uuid.UUID:
+    """The key of a money-moving request, parsed as a UUID before any work happens.
+
+    A missing key is a **400** rather than a 422: the body may be perfectly valid, and the
+    operator has to be told that the request needs a retry-safe identity, which is what
+    ``IdempotencyKeyRequiredError`` says. A key that is not a UUID is refused too, so the
+    row the store writes is always canonical and two spellings of one key can never both
+    claim a posting.
+    """
+    if idempotency_key is None or not idempotency_key.strip():
+        raise IdempotencyKeyRequiredError(details={"header": IDEMPOTENCY_KEY_HEADER})
+    try:
+        return uuid.UUID(idempotency_key.strip())
+    except ValueError as exc:
+        raise ValidationError(
+            "The Idempotency-Key header must be a UUID.",
+            details={"header": IDEMPOTENCY_KEY_HEADER, "reason": "NOT_A_UUID"},
+        ) from exc
+
+
 def require_any_permission(
     *permissions: Permission | str,
 ) -> Callable[[Principal], Awaitable[Principal]]:
@@ -413,6 +442,7 @@ RateLimiterDep = Annotated[RateLimiter, Depends(get_rate_limiter)]
 RevocationDep = Annotated[RevocationList, Depends(get_revocation_list)]
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
 ClientIpDep = Annotated[str | None, Depends(get_client_ip)]
+IdempotencyKeyDep = Annotated[uuid.UUID, Depends(require_idempotency_key)]
 # These two must use a real type (not a quoted forward reference): FastAPI reads the
 # first argument of Annotated to decide whether a parameter is a dependency or a
 # request field, and a string literal makes it fall back to a query parameter.

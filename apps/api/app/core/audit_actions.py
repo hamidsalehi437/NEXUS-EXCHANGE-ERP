@@ -68,6 +68,22 @@ class AuditAction(StrEnum):
     # rollback of the request that caused it.
     LEDGER_POSTING_DENIED = "LEDGER_POSTING_DENIED"
 
+    # --- exchange documents (Phase 5) ---------------------------------------
+    # One row per state change of a business document. The journal rows that a document
+    # produces carry their own JOURNAL_POSTED / JOURNAL_REVERSED actions, so an auditor can
+    # follow "document posted -> entry posted" and back without a second ledger.
+    EXCHANGE_CREATED = "EXCHANGE_CREATED"
+    EXCHANGE_CANCELLED = "EXCHANGE_CANCELLED"
+    EXCHANGE_REVERSED = "EXCHANGE_REVERSED"
+    # An offline-origin event was re-delivered with a payload that contradicts the document
+    # already stored under that ``client_event_id``: last-write-wins is forbidden for
+    # financial records (PART 34), so the contradiction is recorded and refused.
+    EXCHANGE_EVENT_CONFLICT = "EXCHANGE_EVENT_CONFLICT"
+    # A document operation refused before anything was written (missing permission). Kept
+    # separate from the ledger's own denial action so an auditor can tell a refusal to post
+    # from a refusal to record the document that would have posted.
+    EXCHANGE_ACCESS_DENIED = "EXCHANGE_ACCESS_DENIED"
+
 
 # Actions that must never be attributed to "nobody": a failed login for an unknown
 # username has no user row, so the actor is null — every other entry names a user.

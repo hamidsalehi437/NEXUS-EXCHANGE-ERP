@@ -160,6 +160,7 @@ markers = [
   "slow: takes longer than a few seconds",
   "masterdata: Phase 3 master-data suites (currencies, branches, customers, accounts, rates)",
   "accounting: Phase 4 double-entry engine suites (posting, reversal, idempotency, scope, reports)",
+  "exchange: Phase 5 exchange engine suites (posting, lifecycle, accounting integration, concurrency)",
   "security: authorisation and audit-behaviour suites",
 ]
 filterwarnings = [

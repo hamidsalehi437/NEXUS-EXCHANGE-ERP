@@ -66,6 +66,13 @@ STATUS_FAILED = "FAILED"
 # retrying ``POST /api/v1/exchange`` replays the exchange posting, not a different one.
 ENDPOINT_LEDGER_POSTING = "ledger:post"
 
+# The exchange document's own endpoints. A key is scoped to (user, endpoint, key), so a
+# client that retries ``POST /exchange`` replays the exchange — and a key it also used on
+# ``/exchange/{id}/cancel`` can never be answered with the other operation's result.
+ENDPOINT_EXCHANGE_CREATE = "exchange:create"
+ENDPOINT_EXCHANGE_CANCEL = "exchange:cancel"
+ENDPOINT_EXCHANGE_REVERSE = "exchange:reverse"
+
 
 def json_safe(value: Any) -> Any:
     """Return ``value`` as something :func:`json.dumps` serialises exactly.

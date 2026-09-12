@@ -68,6 +68,15 @@ class ErrorCode(StrEnum):
     # Gate Review regression).
     EXCHANGE_DIRECTION_INVALID = "EXCHANGE_DIRECTION_INVALID"
     RATE_OUT_OF_TOLERANCE = "RATE_OUT_OF_TOLERANCE"
+    # Additive v1 code (Phase 5): the client's own `to_amount` disagrees with the amount the
+    # server computes from the applied rate (API_CONTRACT.md §9.3). The client never dictates
+    # a computed total (PART 63), so the disagreement is named instead of being rounded away.
+    AMOUNT_MISMATCH = "AMOUNT_MISMATCH"
+    # Additive v1 code (Phase 5): a reversal document is the ledger's undo of a deal, not a
+    # deal of its own. Undoing it would put the money back while the original stays marked
+    # REVERSED, so the document's status and its economics would tell different stories. The
+    # remedy is a new deal; the refusal says so.
+    REVERSAL_NOT_UNDOABLE = "REVERSAL_NOT_UNDOABLE"
     CURRENCY_INACTIVE = "CURRENCY_INACTIVE"
     BRANCH_INACTIVE = "BRANCH_INACTIVE"
     CUSTOMER_INACTIVE = "CUSTOMER_INACTIVE"
@@ -169,6 +178,20 @@ class BranchInactiveError(NexusError):
     default_message = "That branch is not active."
 
 
+class CustomerInactiveError(NexusError):
+    """A deactivated customer was named on a document (API_CONTRACT §9.3: 422).
+
+    Deactivation is how a record leaves service (PART 25), so a trade that names one would
+    be reopening a closed relationship. The document is refused with its own code rather
+    than a generic validation error, because the counter can act on it: pick the right
+    customer, or ask a manager to reactivate the record.
+    """
+
+    code = ErrorCode.CUSTOMER_INACTIVE
+    http_status = 422
+    default_message = "That customer is not active."
+
+
 class RateNotFoundError(NexusError):
     """No quote is in force for the requested pair, branch and instant (422)."""
 
@@ -264,6 +287,35 @@ class ForbiddenScopeError(NexusError):
 
 
 # --- Financial invariants (mirrors the database SQLSTATEs) -------------------
+class RateOutOfToleranceError(NexusError):
+    """The supplied rate is too far from the quote in force (``rate_tolerance_bps``).
+
+    A cashier may type a rate the house has not published, but only inside the tolerated
+    band: beyond it the transaction would move money at a price nobody approved, which is
+    exactly what the tolerance exists to catch. ``STRICT_RATE_TOLERANCE`` (Phase 3 publishes
+    quotes; Phase 5 spends them) is what makes the band meaningful rather than cosmetic.
+    """
+
+    code = ErrorCode.RATE_OUT_OF_TOLERANCE
+    http_status = 409
+    default_message = "The supplied rate is outside the tolerance of the published quote."
+
+
+class AmountMismatchError(NexusError):
+    """The amount the client stated is not the amount the server computes.
+
+    The server is authoritative for every computed total (PART 63): ``to_amount`` is derived
+    from the applied rate and the commission, never accepted from the client. A client that
+    sends its own expectation is telling the server what it *believes* the customer is owed,
+    and a disagreement inside one minor unit is tolerated only because a hand-held device may
+    round differently at the last decimal place.
+    """
+
+    code = ErrorCode.AMOUNT_MISMATCH
+    http_status = 422
+    default_message = "The stated amount does not match the amount computed from the rate."
+
+
 class InsufficientBalanceError(NexusError):
     code = ErrorCode.INSUFFICIENT_BALANCE
     http_status = 409
@@ -308,6 +360,22 @@ class AlreadyReversedError(NexusError):
     code = ErrorCode.ALREADY_REVERSED
     http_status = 409
     default_message = "This document has already been reversed or cancelled."
+
+
+class ReversalNotUndoableError(ConflictError):
+    """An attempt to undo a reversal document (409).
+
+    A reversing document exists to undo one deal, and the original's status — REVERSED —
+    is the record that it did. Undoing the reversal (by cancelling or reversing it) would
+    restore the money while leaving the original marked REVERSED: the status a reader
+    trusts would contradict the positions an auditor measures. The domain therefore keeps
+    the pair consistent and sends the operator to the honest remedy, a new exchange at the
+    current quote, instead of letting a cancellation chain rewrite history.
+    """
+
+    code = ErrorCode.REVERSAL_NOT_UNDOABLE
+    http_status = 409
+    default_message = "A reversal document cannot itself be cancelled or reversed."
 
 
 class ExchangeDirectionError(NexusError):
