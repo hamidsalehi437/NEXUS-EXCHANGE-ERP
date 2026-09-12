@@ -2,7 +2,8 @@
 
 Phase 1 mounted the system endpoints, Phase 2 authentication/administration, Phase 3 the
 core master data (currencies, branches, customers, chart of accounts, exchange rates),
-Phase 4 the ledger's read surface and Phase 5 the exchange documents themselves. Later
+Phase 4 the ledger's read surface, Phase 5 the exchange documents themselves and Phase 6
+cash control (shifts, movements, reconciliation). Later
 feature routers (cash, transfers, sync, …) are added in the phase that implements them, so
 the OpenAPI document never advertises an endpoint that does not work.
 """
@@ -15,6 +16,7 @@ from app.api.v1 import (
     accounts,
     auth,
     branches,
+    cash,
     currencies,
     customers,
     devices,
@@ -39,6 +41,7 @@ api_router.include_router(customers.router)
 api_router.include_router(accounts.router)
 api_router.include_router(rates.router)
 api_router.include_router(exchange.router)
+api_router.include_router(cash.router)
 api_router.include_router(journal.router)
 api_router.include_router(reports.router)
 

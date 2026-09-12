@@ -154,9 +154,19 @@ def has_money_scale(value: Decimal, *, scale: int = MONEY_SCALE) -> bool:
     ``Decimal.quantize`` refuses (``InvalidOperation``) when the result needs more digits
     than the ambient context allows, so the check runs in the wide context too: the
     question is about the *stored* column, not about the caller's precision.
+
+    A value wider than even that context cannot be quantized at all, and it is refused with
+    the same answer as any other value that is not at this scale (``False``) instead of
+    letting a raw ``decimal.InvalidOperation`` escape: a validator must say no, not throw.
+    A ``NUMERIC(30,10)`` column cannot hold such a value, so ``False`` is also the honest
+    answer — and the caller then reports it as the bad request it is (Phase 6 fix: the
+    exception used to surface as a server defect on the way to the bound check).
     """
     with money_context():
-        return value == value.quantize(_quantum(scale), rounding=ROUND_HALF_UP)
+        try:
+            return value == value.quantize(_quantum(scale), rounding=ROUND_HALF_UP)
+        except InvalidOperation:
+            return False
 
 
 def money_sum(values: Iterable[Decimal]) -> Decimal:

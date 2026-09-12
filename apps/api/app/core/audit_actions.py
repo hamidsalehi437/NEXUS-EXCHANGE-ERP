@@ -84,6 +84,18 @@ class AuditAction(StrEnum):
     # from a refusal to record the document that would have posted.
     EXCHANGE_ACCESS_DENIED = "EXCHANGE_ACCESS_DENIED"
 
+    # --- cash control (Phase 6) ---------------------------------------------
+    # A shift and the movements it contains are separate facts: opening and closing are
+    # lifecycle acts on the session, recording a movement is the money moving, and a
+    # reversal names the movement it undoes. A refused cash act carries its own action so
+    # an operator's failed attempt to take money out is as visible as a successful one.
+    CASH_SESSION_OPENED = "CASH_SESSION_OPENED"
+    CASH_SESSION_CLOSED = "CASH_SESSION_CLOSED"
+    CASH_MOVEMENT_RECORDED = "CASH_MOVEMENT_RECORDED"
+    CASH_ADJUSTMENT_RECORDED = "CASH_ADJUSTMENT_RECORDED"
+    CASH_MOVEMENT_REVERSED = "CASH_MOVEMENT_REVERSED"
+    CASH_OPERATION_DENIED = "CASH_OPERATION_DENIED"
+
 
 # Actions that must never be attributed to "nobody": a failed login for an unknown
 # username has no user row, so the actor is null — every other entry names a user.

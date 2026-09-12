@@ -73,6 +73,17 @@ ENDPOINT_EXCHANGE_CREATE = "exchange:create"
 ENDPOINT_EXCHANGE_CANCEL = "exchange:cancel"
 ENDPOINT_EXCHANGE_REVERSE = "exchange:reverse"
 
+# The cash endpoints (Phase 6). ``cash:open`` and ``cash:close`` are separate keys from
+# ``cash:in``/``cash:out`` for the same reason the exchange lifecycle moves are: a client
+# that reuses one key across operations must be answered per operation, never with another
+# operation's recorded result.
+ENDPOINT_CASH_OPEN = "cash:open"
+ENDPOINT_CASH_IN = "cash:in"
+ENDPOINT_CASH_OUT = "cash:out"
+ENDPOINT_CASH_ADJUSTMENT = "cash:adjustment"
+ENDPOINT_CASH_CLOSE = "cash:close"
+ENDPOINT_CASH_REVERSE = "cash:reverse"
+
 
 def json_safe(value: Any) -> Any:
     """Return ``value`` as something :func:`json.dumps` serialises exactly.
@@ -93,7 +104,9 @@ def json_safe(value: Any) -> Any:
         return str(value)
     if isinstance(value, uuid.UUID):
         return str(value)
-    if isinstance(value, dt.datetime | dt.date):
+    if isinstance(value, dt.datetime):
+        return _wire_moment(value)
+    if isinstance(value, dt.date):
         return value.isoformat()
     if isinstance(value, Mapping):
         return {str(key): json_safe(item) for key, item in value.items()}
@@ -103,6 +116,20 @@ def json_safe(value: Any) -> Any:
         "Unsupported value in an idempotent request body.",
         details={"type": type(value).__name__},
     )
+
+
+def _wire_moment(value: dt.datetime) -> str:
+    """A moment as the API serialises it: RFC 3339, ``Z`` for UTC.
+
+    The stored answer has to be the answer the caller received. A record that says
+    ``+00:00`` where the wire said ``Z`` is the same instant but not the same document, and
+    an auditor comparing a printed receipt with the idempotency row should not have to
+    normalise the two by hand — nor should a replay, which is served from this JSON, return
+    a differently spelled body than the original call did.
+    """
+    if value.tzinfo is not None and value.utcoffset() == dt.timedelta(0):
+        return f"{value.astimezone(dt.UTC).replace(tzinfo=None).isoformat()}Z"
+    return value.isoformat()
 
 
 def canonical_request_hash(payload: Mapping[str, Any]) -> str:

@@ -182,8 +182,10 @@ Every non-2xx response:
 | `APPEND_ONLY_VIOLATION` | 403 | Attempt to update/delete an append-only row (`P0001`) |
 | `CASH_RECON_INCOMPLETE` | 422 | Close without counted or expected amounts (`NEX05`) |
 | `CASH_COUNTER_ACCOUNT_REQUIRED` | 422 | `cash/in` or `cash/out` without a counter-account |
-| `CASH_SESSION_NOT_OPEN` | 409 | Cash movement or close without an open session |
-| `CASH_SESSION_ALREADY_OPEN` | 409 | Second open session for the same device |
+| `CASH_SESSION_NOT_OPEN` | 409 | Cash movement or close without an open session (addressed by the caller) |
+| `CASH_OPENING_MISMATCH` | 409 | The counted opening balance differs from the cash the books carry |
+| `CASH_MOVEMENT_NOT_REVERSIBLE` | 409 | A movement that may not be undone (already a reversal, or dated before its original) |
+| `CASH_SESSION_ALREADY_OPEN` | 409 | Second open shift at the same branch (or on the same device) |
 | `RATE_NOT_FOUND` | 422 | No quote in force for the pair/branch |
 | `EXCHANGE_DIRECTION_INVALID` | 422 | The currencies of an exchange cannot describe a deal: the same currency on both sides (`details.reason` = `SAME_CURRENCY`, field `to_currency_id`) or the functional currency as the delivered side (`FUNCTIONAL_CURRENCY_NOT_DELIVERABLE`, field `from_currency_id`). Additive v1 code, Phase 4 Gate Review regression |
 | `RATE_OUT_OF_TOLERANCE` | 409 | Supplied rate deviates beyond tolerance (`tolerance_bps`) |
@@ -252,6 +254,7 @@ Roles: `SUPER_ADMIN`, `OWNER`, `MANAGER`, `ACCOUNTANT`, `CASHIER`, `AUDITOR`.
 | `exchange.cancel` | ✅ | ✅ | ✅ | ✅ | — | — |
 | `exchange.reverse` | ✅ | ✅ | ✅ | — | — | — |
 | `cash.create` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `cash.view` | ✅ | ✅ | ✅ | ✅ | ✅ (branch) | ✅ |
 | `cash.close` | ✅ | ✅ | ✅ | ✅ | ✅ (own shift) | — |
 | `cash.adjust` | ✅ | ✅ | ✅ | ✅ | — | — |
 | `customer.create` / `customer.view` | ✅ | ✅ | ✅ | ✅ | create ✅ / view ✅ | view ✅ |
@@ -383,16 +386,33 @@ Errors specific to this endpoint: `RATE_NOT_FOUND`, `RATE_OUT_OF_TOLERANCE`, `IN
 
 ### 9.4 Cash
 
+A **cash session** is one drawer shift at one branch. The frozen partial unique index
+`ux_cash_sessions_one_open_per_device` allows at most one open session per device, and the
+service locks the branch row so a second concurrent open is refused with
+`409 CASH_SESSION_ALREADY_OPEN` naming the session that holds the branch. A **cash movement** is
+the immutable physical evidence that value entered or left a branch/currency position; the
+journal entry posted through `AccountingService` is the authoritative accounting fact, and the
+two are always written in the same database transaction.
+
 | Method | Path | Permission | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/cash/balance` | `cash.view` | Per branch/currency position from `v_cash_position`, plus ledger balance; `branch_id` required for non-owners |
-| `POST` | `/cash/open` | `cash.create` | Opens a shift (one open session per device); records `OPENING` movements |
-| `POST` | `/cash/in` | `cash.create` | Requires `source_account_id`; `Idempotency-Key` required |
-| `POST` | `/cash/out` | `cash.create` | Requires `target_account_id`; `Idempotency-Key` required |
-| `POST` | `/cash/adjustment` | `cash.adjust` | Requires `adjustment_sign` (±1) and a reason; journals to 5090 Cash Short/Over |
-| `GET` | `/cash/movements` | `cash.view` | Filters: `from`, `to`, `branch_id`, `currency_id`, `movement_type`, `session_id` |
-| `POST` | `/cash/close` | `cash.close` | Counted per currency; `difference = counted − expected`; variance posted as `ADJUSTMENT`; session → `CLOSED` |
-| `GET` | `/cash/sessions` | `cash.view` | Shift history with differences |
+| `GET` | `/cash/balance` | `cash.view` | Per branch/currency physical position from `v_cash_position` plus the ledger quantity and functional balance, with `reconciled`; `branch_id` required for non-owners, a branch outside the caller's scope is `403 FORBIDDEN_SCOPE` |
+| `POST` | `/cash/open` | `cash.create` | Opens the shift: declared opening counts (`openings[]`, each with an optional `exchange_rate` for a foreign currency), optional `device_id`, `notes`; the opening count must equal the position the drawer carries. `201`; `409 CASH_SESSION_ALREADY_OPEN`; `422` for an unknown or inactive currency or a missing published quote for a foreign opening, `409 CASH_OPENING_MISMATCH` when the declared opening does not match the carried position |
+| `POST` | `/cash/in` | `cash.create` | Cash received into a drawer; `source_account_id` is the counter-account the ledger balances against. `Idempotency-Key` **required**. `201`; movement + journal entry + audit in one transaction |
+| `POST` | `/cash/out` | `cash.create` | Cash paid out of a drawer; `target_account_id` is the counter-account. `Idempotency-Key` **required**. `201`; `409 INSUFFICIENT_BALANCE` (`details.reason` = `NO_POSITION` or `QUANTITY_EXCEEDED` with the shortfall) when the position cannot give the value up |
+| `POST` | `/cash/adjustment` | `cash.adjust` | Manual short/over correction; requires `adjustment_sign` (±1) and a `reason`; journals to 5090 Cash Short/Over. `Idempotency-Key` optional. `201` |
+| `POST` | `/cash/close` | `cash.close` | Closes the shift; `counted[]` per currency. `expected` is derived from the session's authoritative movements, `difference = counted − expected`; a non-zero difference is posted as an `ADJUSTMENT` through 5090 and needs `cash.adjust` on the caller. The caller must be the operator who opened the shift, unless they hold `cash.adjust` (`403 PERMISSION_DENIED`, `details.reason = NOT_SESSION_OWNER`). `Idempotency-Key` **required**. `200`; `422 CASH_RECON_INCOMPLETE` when a currency the shift moved is not counted, `409 CASH_OPENING_MISMATCH` when the declared opening differs from the position the books carry |
+| `GET` | `/cash/movements` | `cash.view` | Filters: `branch_id`, `currency_id`, `movement_type` (`OPENING`/`IN`/`OUT`/`ADJUSTMENT`/`EXPENSE`/`CLOSING`), `session_id`, `from`, `to`; paginated (`limit` ≤ 200, `offset`) |
+| `GET` | `/cash/movements/{id}` | `cash.view` | One movement with its journal reference, reversal linkage and session state |
+| `POST` | `/cash/movements/{id}/reverse` | `cash.adjust` | Requires a `reason`. Records the compensating movement and reverses the original journal entry through `AccountingService`; the original row and its journal entry stay immutable. `Idempotency-Key` optional. `200`; `409 ALREADY_REVERSED` on a second reversal, `409 CASH_MOVEMENT_NOT_REVERSIBLE` for a movement that may not be undone (a reversal itself, or a correction dated before its original) |
+| `GET` | `/cash/sessions` | `cash.view` | Shift history with opening/expected/counted/difference per currency. Filters: `branch_id`, `status` (`OPEN`/`CLOSED`), `device_id`, `opened_by`, `from`, `to`; paginated |
+| `GET` | `/cash/sessions/current` | `cash.view` | The caller's open shift at the branch (the branch row is the lookup scope); `404 RESOURCE_NOT_FOUND` with `details.reason = NO_OPEN_SESSION` when none is open |
+| `GET` | `/cash/sessions/{id}` | `cash.view` | One shift with its per-currency lines, movements, variance and journal references; a shift of another branch is `404 RESOURCE_NOT_FOUND`, never a disclosure |
+
+Money fields are decimal strings; a `float` in the JSON body is rejected (`422`), never coerced.
+`branch_id`, `currency_id`, `session_id` and every account id are validated against the caller's
+branch scope and the drawer's own accounts (`403 FORBIDDEN_SCOPE` / `404 RESOURCE_NOT_FOUND`), so
+an id from another branch is neither usable nor detectable.
 
 `POST /cash/close` response (excerpt):
 

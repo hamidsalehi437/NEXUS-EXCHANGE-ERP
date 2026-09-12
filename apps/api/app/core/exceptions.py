@@ -59,6 +59,14 @@ class ErrorCode(StrEnum):
     CASH_COUNTER_ACCOUNT_REQUIRED = "CASH_COUNTER_ACCOUNT_REQUIRED"
     CASH_SESSION_NOT_OPEN = "CASH_SESSION_NOT_OPEN"
     CASH_SESSION_ALREADY_OPEN = "CASH_SESSION_ALREADY_OPEN"
+    # Additive v1 codes (Phase 6). ``CASH_OPENING_MISMATCH`` is a *counted* opening that
+    # disagrees with the position the books already carry: money cannot enter the ledger
+    # twice, so the shift is refused instead of quietly posting the difference to equity.
+    # ``CASH_MOVEMENT_NOT_REVERSIBLE`` is a correction aimed at a movement that belongs to
+    # another document (an exchange deal, a shift opening): that document owns its own
+    # cancellation, and reversing one of its physical legs would break it in half.
+    CASH_OPENING_MISMATCH = "CASH_OPENING_MISMATCH"
+    CASH_MOVEMENT_NOT_REVERSIBLE = "CASH_MOVEMENT_NOT_REVERSIBLE"
     RATE_NOT_FOUND = "RATE_NOT_FOUND"
     # Additive v1 code (Phase 4): an exchange whose currencies cannot describe a deal —
     # delivering the functional currency, or naming one currency twice. Kept apart from
@@ -439,6 +447,46 @@ class CashReconciliationIncompleteError(NexusError):
     code = ErrorCode.CASH_RECON_INCOMPLETE
     http_status = 422
     default_message = "A cash reconciliation needs both the expected and the counted amount."
+
+
+# --- cash control (Phase 6) --------------------------------------------------
+class CashSessionNotOpenError(NexusError):
+    """No open shift in force for the drawer, or the shift is already closed.
+
+    One code covers both directions on purpose (``API_CONTRACT.md`` §7): a movement or a
+    close against a session that is not OPEN is the same operator problem — "there is no
+    shift to post into" — and the refusal carries the session's actual status.
+    """
+
+    code = ErrorCode.CASH_SESSION_NOT_OPEN
+    http_status = 409
+    default_message = "There is no open cash session for this drawer."
+
+
+class CashSessionAlreadyOpenError(NexusError):
+    """A second shift was opened for a drawer that already has one open."""
+
+    code = ErrorCode.CASH_SESSION_ALREADY_OPEN
+    http_status = 409
+    default_message = "This drawer already has an open cash session."
+
+
+class CashOpeningMismatchError(NexusError):
+    """The declared opening count disagrees with the drawer's carried position."""
+
+    code = ErrorCode.CASH_OPENING_MISMATCH
+    http_status = 409
+    default_message = "The counted opening balance differs from the cash the books carry."
+
+
+class CashMovementNotReversibleError(NexusError):
+    """The movement is one leg of a document that owns its own correction."""
+
+    code = ErrorCode.CASH_MOVEMENT_NOT_REVERSIBLE
+    http_status = 409
+    default_message = (
+        "That cash movement belongs to another document and cannot be reversed on its own."
+    )
 
 
 # --- Infrastructure ----------------------------------------------------------

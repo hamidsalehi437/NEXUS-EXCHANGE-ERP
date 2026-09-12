@@ -384,6 +384,28 @@ def require_permission(
 IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
 
 
+async def optional_idempotency_key(
+    idempotency_key: Annotated[str | None, Header(alias=IDEMPOTENCY_KEY_HEADER)] = None,
+) -> uuid.UUID | None:
+    """The key of a request the contract does *not* force to carry one.
+
+    ``API_CONTRACT.md`` §8 lists the endpoints that must carry an ``Idempotency-Key``; cash
+    opening, adjustment and movement reversal are not on that list, so a client may send one
+    (and a device coming back from an offline period should) and the store honours it exactly
+    as it does elsewhere. A key that is present but not a UUID is still refused: it would
+    otherwise claim a posting under a spelling nothing else could look up.
+    """
+    if idempotency_key is None or not idempotency_key.strip():
+        return None
+    try:
+        return uuid.UUID(idempotency_key.strip())
+    except ValueError as exc:
+        raise ValidationError(
+            "The Idempotency-Key header must be a UUID.",
+            details={"header": IDEMPOTENCY_KEY_HEADER, "reason": "NOT_A_UUID"},
+        ) from exc
+
+
 async def require_idempotency_key(
     idempotency_key: Annotated[str | None, Header(alias=IDEMPOTENCY_KEY_HEADER)] = None,
 ) -> uuid.UUID:
@@ -443,6 +465,7 @@ RevocationDep = Annotated[RevocationList, Depends(get_revocation_list)]
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
 ClientIpDep = Annotated[str | None, Depends(get_client_ip)]
 IdempotencyKeyDep = Annotated[uuid.UUID, Depends(require_idempotency_key)]
+OptionalIdempotencyKeyDep = Annotated[uuid.UUID | None, Depends(optional_idempotency_key)]
 # These two must use a real type (not a quoted forward reference): FastAPI reads the
 # first argument of Annotated to decide whether a parameter is a dependency or a
 # request field, and a string literal makes it fall back to a query parameter.

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.7 |
+| Version | 1.9 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -22,7 +22,7 @@
 | 3 | Core master data (currencies, branches, customers, accounts, rates) | **APPROVED** | `docs/phases/PHASE3_REPORT.md` |
 | 4 | Accounting engine | **APPROVED** | `docs/phases/PHASE4_REPORT.md` |
 | 5 | Exchange (buy/sell, commission, receipts, cancel, reverse) | **READY FOR REVIEW** | `docs/phases/PHASE5_REPORT.md` |
-| 6 | Cash (open, in, out, adjustment, close) | NOT STARTED | — |
+| 6 | Cash (open, in, out, adjustment, close) | **READY FOR REVIEW** | `docs/phases/PHASE6_REPORT.md` |
 | 7 | Reports | NOT STARTED | — |
 | 8 | Offline (Drift schema, outbox, sync engine, conflicts) | NOT STARTED | — |
 | 9 | Multi-branch (scoping, device policies, branch balances) | NOT STARTED | — |
@@ -40,6 +40,7 @@ Notes:
 * Phases 0–13 are the phases defined by the approved roadmap (`docs/architecture/ROADMAP.md`). Rows 14–17 are reserved placeholders; extending the roadmap requires a documentation change and human approval, and this table is updated at the same time.
 * Phase 1, Phase 2 and Phase 3 are **APPROVED** (the reviewer's decision, recorded here).
 * Phase 4 is **APPROVED** (the reviewer's decision, recorded here) with the implementation `21b6211` and its finalisation `f0910b5`. Phase 5 is **READY FOR REVIEW**, not approved. Only the human reviewer moves a phase to APPROVED, and the approval is recorded in this table.
+* Phase 6 is **READY FOR REVIEW** with `docs/phases/PHASE6_REPORT.md`; it is **not** approved. Phase 7–17 remain **NOT STARTED**.
 * Phase 2 commits: `2c53a78` (start, last Phase 1 commit) → `f3d4bb6` (implementation, 45 files) →
   `9605ea382d3715f96d784699de470b56497680a7` (report, review and CI fixes) → `58eada2` (hash pin) →
   `19468d2` (CI reference-path fix, defect 13) → `0a45154` (CI check-annotation reporter) →
@@ -154,6 +155,44 @@ Notes:
   one race winner's shape (both shapes verified by a throwaway probe, then the suite run three
   times green). No assertion was weakened, no test deleted, skipped or xfailed.
 
+
+* Phase 6 commits: `9d67582` (start, last Phase 5 commit — *docs(phase5): pin the implementation
+  commit and record the green CI runs*) → the **implementation commit** (*feat(cash): complete
+  phase 6 cash management*; **22 files, +9 215/−21** — 11 production, 1 tooling, 7 test and
+  3 documentation files, `docs/phases/PHASE6_REPORT.md` and this document included),
+  pushed to branch `arena/01a090c5-nexus-exchange-erp` → the **finalisation commit**
+  (documentation only) that pins this hash and records the CI runs, at the top of the branch and
+  visible in `git log`.
+* Phase 6 verification (whole sweep run **twice consecutively**, exit 0 both times): `ruff check .`
+  clean; `ruff format --check .` → 156 files already formatted; `mypy app seeds scripts` → no
+  issues in **97** source files; `pytest tests/unit -q` → **577 passed** (2.16 s);
+  `pytest tests/integration -q` → **799 passed** (240.48 s then 237.40 s), i.e. **1 376 passed**
+  against the 1 301-test baseline of `9d67582` (548 unit + 753 integration); the cash suites →
+  68 tests (unit rules 23, sessions 15, movements 21, concurrency 9), the concurrency suite green
+  in four standalone runs; `tests/integration/test_accounting_multicurrency.py` → 32 passed with
+  the amended counter-drawer tests and the new regression; fresh-database migration
+  (`0001` → `0002_runtime_schema_revision`, head) on `nexus_ci_clean`; `schema_gate orm-db` MATCH
+  and `schema_gate db-db` (reference DDL vs migrated) MATCH; seeds idempotent three ways
+  (89 / 88 / 88); Phase 0 invariant suite on a freshly created migrated database →
+  **ALL ASSERTIONS PASSED**.
+* Phase 6 needed **no migration** and no schema change: shifts, session lines, movements (with the
+  generated `signed_amount`, the reference/immutability constraints and the partial unique
+  indexes), the non-negative cash trigger and the position views already exist in the approved
+  Phase 0 schema, so `docs/database/schema.sql` and head revision `0002_runtime_schema_revision`
+  are unchanged and no frozen migration was touched.
+* Phase 6 defects: `D6-1` … `D6-8` in `docs/phases/PHASE6_REPORT.md` §23 — the generated
+  movement-id read before `flush()` (a latent Phase 5 defect), the movement reversal that did not
+  undo its journal entry (measured cash 1 000 / ledger 600 / drawer 600), the idempotency record
+  that stored `+00:00` where the wire answered `Z`, a money-boundary validator that let
+  `InvalidOperation` escape as a 500 for values wider than the money context, a drawer disposal
+  that could reach the database backstop instead of a domain refusal, a non-deterministic journal
+  line order, one order-sensitive concurrency assertion (test-side; money was correct) and four
+  MyPy typing errors. Two findings were **behaviour confirmations, not defects**: the counter-leg
+  inventory guard is intended (the two Phase 3/4 tests that credited an unfunded drawer were
+  amended to fund it first and a new regression pins the refusal), and the exchange module's own
+  `+00:00` timestamp spelling is self-consistent (recorded as a cosmetic limitation). No assertion
+  was weakened, no test deleted, skipped or xfailed, and no production rule was scoped back.
+
 ## 2. Reporting rule for every phase from Phase 2 onward
 
 Each phase must, before it is declared complete:
@@ -169,7 +208,7 @@ Each phase must, before it is declared complete:
 | Limitation | Impact | Status |
 | --- | --- | --- |
 | No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seeds, development administrator, login and readiness through nginx, worker registration) and its step conclusions are the evidence | **All 15 compose steps green** in run `34628225139` |
-| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`. **Green for Phase 3** — run `34645985626` (push) and `34645990882` (PR) on `db85e21`. **Green for Phase 4** — run `34656339711` (push) and `34656343155` (PR) on `da0c9ff`, and the Gate Review fix commit `21b6211` with run `34659645307` (push) and `34659648417` (PR): all `completed`/`success`, six jobs `success` in each run, every *Integration tests and schema gates* step `success` (the only non-success step is `Container logs on failure`, `skipped` by design). **Phase 5** — run `34667533980` (push) and `34667536528` (pull request) on `40945b1`: all `completed`/`success`, six jobs `success` in each run |
+| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`. **Green for Phase 3** — run `34645985626` (push) and `34645990882` (PR) on `db85e21`. **Green for Phase 4** — run `34656339711` (push) and `34656343155` (PR) on `da0c9ff`, and the Gate Review fix commit `21b6211` with run `34659645307` (push) and `34659648417` (PR): all `completed`/`success`, six jobs `success` in each run, every *Integration tests and schema gates* step `success` (the only non-success step is `Container logs on failure`, `skipped` by design). **Phase 5** — run `34667533980` (push) and `34667536528` (pull request) on `40945b1`: all `completed`/`success`, six jobs `success` in each run. **Phase 6** — the implementation commit's push and pull-request runs are recorded in the Phase 6 finalisation commit (identical six-job expectation; local reproduction green twice) |
 | Python 3.11.2 (system interpreter) instead of 3.12 | Runtime differs from the target interpreter; dependency set and code target 3.12 | Known; documented per phase |
 | No command-line `redis-cli`/`psql` on `PATH` | Verification uses the driver-level scripts (`scripts/schema_gate.py`, `tests/invariants/*.sql` executed through psycopg) | Worked around |
 
@@ -177,6 +216,7 @@ Each phase must, before it is declared complete:
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.9 | 2026-09-12 | Phase 6 implementation + report: Phase 6 marked **READY FOR REVIEW** with `docs/phases/PHASE6_REPORT.md` (34 sections); the cash module (12 endpoints, 68 new tests), the `API_CONTRACT.md` §9.4 rewrite and the full verification (1 376 passed in two consecutive sweeps / ruff / mypy 97 files / migration / both schema gates / Phase 0 invariants / seeds 89-88-88) recorded, with the eight phase defects and the two behaviour confirmations. Phase 5 stays **READY FOR REVIEW** (not approved) and Phase 7–17 stay **NOT STARTED** |
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
 | 1.1 | 2026-09-12 | Phase 2 marked **APPROVED**; Phase 3 marked **READY FOR REVIEW** with `docs/phases/PHASE3_REPORT.md`; Phase 3 commit chain and the "no migration needed" note added; Phase 4–17 remain NOT STARTED |
 | 1.2 | 2026-09-12 | Phase 3 finalisation: the implementation commit pinned as `db85e21` with its exact diff stat and the full verification results (905 passed / ruff / mypy / migration / gates / Phase 0 invariants / seeds); the Phase 3 CI runs `34645985626` and `34645990882` recorded in the environment table. Phase 3 stays **READY FOR REVIEW** (not approved) and Phase 4–17 stay **NOT STARTED** |

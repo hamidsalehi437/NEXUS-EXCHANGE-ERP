@@ -1084,10 +1084,18 @@ class TestCashAndExpenseInForeignCurrency:
     def test_a_counter_account_in_the_functional_currency_is_valued_at_one(
         self, api_client: TestClient, admin_headers: dict[str, str], main_database: str
     ) -> None:
-        """§6.1: the offset leg of a foreign opening is functional, at rate 1."""
+        """§6.1: the offset leg of a foreign opening is functional, at rate 1.
+
+        The offset is a *drawer* here, so it pays the 7,000 AFN out of real cash: the
+        position is funded first, and the account ends 7,000 lighter (Phase 6 guards every
+        drawer a movement touches — the counter leg included).
+        """
         world = build_world(api_client, admin_headers, main_database, quotes=True)
 
         async def scenario(service):
+            await fund_drawer(
+                service, world, account_key="cash_afn", currency_code="AFN", amount="10000"
+            )
             return await service.post_cash_movement(
                 movement_type="OPENING",
                 reference_id=uuid.uuid4(),
@@ -1106,6 +1114,17 @@ class TestCashAndExpenseInForeignCurrency:
         assert by_currency["AFN"].exchange_rate == Decimal("1")
         assert by_currency["AFN"].credit == Decimal("7000")
         assert view.is_balanced is True
+        # 10,000 funded - 7,000 paid for the dollars: the counter leg moved real cash.
+        remaining = read(
+            main_database,
+            """
+            SELECT COALESCE(SUM(l.debit - l.credit), 0) AS balance
+              FROM journal_lines l
+             WHERE l.account_id = :account
+            """,
+            account=world.account("cash_afn"),
+        )[0]["balance"]
+        assert Decimal(str(remaining)) == Decimal("3000.0000000000")
 
     def test_a_currency_bound_counter_account_mirrors_the_movement_exactly(
         self, api_client: TestClient, admin_headers: dict[str, str], main_database: str
@@ -1127,6 +1146,19 @@ class TestCashAndExpenseInForeignCurrency:
         )
 
         async def scenario(service):
+            # A drawer can only give up dollars it holds: the second drawer is funded with
+            # exactly the 400 USD this movement moves out of it (Phase 6 guard).
+            await service.post_cash_movement(
+                movement_type="IN",
+                reference_id=uuid.uuid4(),
+                branch_id=world.branch_id,
+                cash_account_id=second_drawer,
+                counter_account_id=world.account("capital"),
+                currency_id=world.money("USD").id,
+                amount=Decimal("400"),
+                exchange_rate=Decimal("70"),
+                actor=world.head_actor,
+            )
             return await service.post_cash_movement(
                 movement_type="IN",
                 reference_id=uuid.uuid4(),
@@ -1145,6 +1177,99 @@ class TestCashAndExpenseInForeignCurrency:
         assert {row["exchange_rate"] for row in stored} == {Decimal("70.0000000000")}
         assert {row["foreign_amount"] for row in stored} == {Decimal("400.0000000000")}
         assert view.total_debit == view.total_credit == Decimal("28000")
+        # The two drawers mirror each other: what one received, the other gave up.
+        balances = {
+            uuid.UUID(str(row["account_id"])): Decimal(str(row["balance"]))
+            for row in read(
+                main_database,
+                """
+                SELECT l.account_id, COALESCE(SUM(l.debit - l.credit), 0) AS balance
+                  FROM journal_lines l
+                 WHERE l.account_id = ANY(:accounts)
+                 GROUP BY l.account_id
+                """,
+                accounts=[world.account("cash_usd"), second_drawer],
+            )
+        }
+        assert balances[world.account("cash_usd")] == Decimal("28000.0000000000")
+        assert balances[second_drawer] == Decimal("0.0000000000")
+
+    def test_a_counter_drawer_that_holds_nothing_cannot_give_value_up(
+        self, api_client: TestClient, admin_headers: dict[str, str], main_database: str
+    ) -> None:
+        """A movement cannot credit a drawer past its position — the counter leg is guarded.
+
+        An ``IN`` takes its value *from* the counter account: when that account is another
+        drawer, the movement is a transfer between two tills and the source must hold what
+        it gives. Without the guard the ledger would carry a negative cash asset that no
+        physical movement explains (Phase 6 regression, ``ACCOUNTING_MODEL.md`` §11).
+        """
+        from tests.accounting_helpers import create_account, unique_code
+
+        world = build_world(api_client, admin_headers, main_database, quotes=True)
+        empty_drawer = uuid.UUID(
+            create_account(
+                api_client,
+                admin_headers,
+                code=unique_code(),
+                name="Cash USD (empty drawer)",
+                account_type="ASSET",
+                currency_id=str(world.money("USD").id),
+                branch_id=str(world.branch_id),
+            )["id"]
+        )
+
+        async def scenario(service):
+            entries_before = int(
+                read(
+                    main_database,
+                    "SELECT COUNT(*) AS total FROM journal_entries WHERE branch_id = :branch_id",
+                    branch_id=world.branch_id,
+                )[0]["total"]
+            )
+            with pytest.raises(InsufficientBalanceError) as refusal:
+                await service.post_cash_movement(
+                    movement_type="IN",
+                    reference_id=uuid.uuid4(),
+                    branch_id=world.branch_id,
+                    cash_account_id=world.account("cash_usd"),
+                    counter_account_id=empty_drawer,
+                    currency_id=world.money("USD").id,
+                    amount=Decimal("400"),
+                    exchange_rate=Decimal("70"),
+                    actor=world.head_actor,
+                )
+            # The source drawer holds nothing, so the refusal names the reason and the
+            # quantity that could not be delivered.
+            assert refusal.value.details["reason"] == "NO_POSITION"
+            assert refusal.value.details["account_id"] == str(empty_drawer)
+            assert refusal.value.details["foreign_quantity"] == "0.0000000000"
+            assert refusal.value.details["disposing_quantity"] == "400.0000000000"
+            entries_after = int(
+                read(
+                    main_database,
+                    "SELECT COUNT(*) AS total FROM journal_entries WHERE branch_id = :branch_id",
+                    branch_id=world.branch_id,
+                )[0]["total"]
+            )
+            # A refusal is not a posting: no entry was written for it.
+            assert entries_after == entries_before
+            return Decimal(
+                str(
+                    read(
+                        main_database,
+                        """
+                        SELECT COALESCE(SUM(l.debit - l.credit), 0) AS balance
+                          FROM journal_lines l
+                         WHERE l.account_id = :account
+                        """,
+                        account=empty_drawer,
+                    )[0]["balance"]
+                )
+            )
+
+        # The drawer the movement wanted to take from is untouched.
+        assert run_scenario(main_database, scenario) == Decimal("0")
 
     def test_a_currency_less_counter_account_records_functional_value(
         self, api_client: TestClient, admin_headers: dict[str, str], main_database: str

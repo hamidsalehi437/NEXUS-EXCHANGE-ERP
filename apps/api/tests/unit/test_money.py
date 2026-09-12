@@ -18,6 +18,7 @@ from app.core.money import (
     MoneyError,
     assert_within_money_bounds,
     format_decimal,
+    has_money_scale,
     quantize_money,
     require_non_negative,
     require_positive,
@@ -173,3 +174,30 @@ class TestBounds:
         # abs() would round NEAR_MAX to 1E20 under the default context and reject it.
         assert abs(self.NEAR_MAX) >= MAX_MONEY  # documents the trap
         assert assert_within_money_bounds(self.NEAR_MAX.copy_abs()) == self.NEAR_MAX
+
+
+class TestScaleCheck:
+    """``has_money_scale`` answers a question; it never raises one of its own.
+
+    Phase 6 (cash): a value wider than even the money context raised a raw
+    ``decimal.InvalidOperation`` out of the validator, which the API reported as a server
+    defect (500) instead of the bad request it is. The check now says "not at this scale",
+    which is the same answer it gives any other value the column cannot store.
+    """
+
+    def test_a_value_at_the_stored_scale_is_accepted(self) -> None:
+        assert has_money_scale(Decimal("1500.2500000000")) is True
+        assert has_money_scale(Decimal("0")) is True
+
+    def test_a_value_beyond_the_stored_scale_is_refused(self) -> None:
+        assert has_money_scale(Decimal("1.00000000001")) is False
+
+    def test_a_value_wider_than_the_money_context_is_refused_not_raised(self) -> None:
+        # 31 significant digits: ``quantize`` cannot even round it in the wide context.
+        assert has_money_scale(Decimal("1" * 31)) is False
+
+    def test_the_answer_does_not_depend_on_the_ambient_context(self) -> None:
+        with localcontext() as context:
+            context.prec = 6
+            assert has_money_scale(Decimal("1500.2500000000")) is True
+            assert has_money_scale(Decimal("1" * 31)) is False
