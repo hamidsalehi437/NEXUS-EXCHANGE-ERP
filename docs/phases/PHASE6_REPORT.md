@@ -83,21 +83,36 @@ file of the frozen phases was deleted, renamed or weakened.
 
 ## 4. Final commit
 
-Phase 6 is **four commits** on `arena/01a090c5-nexus-exchange-erp` — the implementation, the
-documentation commit that pinned it, one scoped follow-up found by the phase's own hygiene gate,
-and the finalisation:
+Phase 6 is **six commits on top of `9d67582`** on `arena/01a090c5-nexus-exchange-erp` — the
+implementation, the documentation commit that pinned it, the verification follow-up rebuilt after
+the sandbox reset (its code commit, then its documentation commit), this finalisation, and the
+documentation commit that pins the rebuilt run's CI ids:
 
 | Field | Value |
 | --- | --- |
 | Implementation | **`f8cece6bf26182016d06d885496bd9b03215473f`** (`f8cece6`), *feat(cash): complete phase 6 cash management* — parent `9d67582`, **22 files, +9 215/−21** (11 production, 1 tooling, 7 test, 3 documentation), push run `34677845254` and pull-request run `34677848307`, both `completed`/`success`, six jobs green each |
 | Pinning record | **`8ad906d`** (*docs(phase6): pin the implementation commit and record the green CI runs*) — documentation only; parent `f8cece6` |
-| Follow-up | **`f4f90e2`** (*fix(cash): compose cash SQL from pure-literal prefixes and pin both refusal shapes*) — removes the 18 `# noqa: S608` suppressions the first draft needed (D6-9) by hoisting every statement prefix into a pure-literal module constant, the composed SQL asserted token-identical so no statement's meaning changes; and pins the two contractual refusal shapes (D6-10) |
-| Finalisation | the documentation commit that follows it — refreshed counts (1 377 tests), the exact coverage numbers and this record. It changes no source file |
+| Follow-up code (rebuilt) | **`8f5400e`** (*fix(cash): compose cash SQL from pure-literal prefixes and pin both refusal shapes*) — the four code and test files: removes the 18 `# noqa: S608` suppressions the first draft needed (D6-9) by hoisting every statement prefix into a pure-literal module constant, the composed SQL asserted token-identical so no statement's meaning changes; and pins the two contractual refusal shapes (D6-10) |
+| Follow-up docs (rebuilt) | **`2968fa0`** (*docs(phase6): record the verification round, the exact coverage numbers and the push state*) — `docs/PROJECT_STATUS.md` and this report: refreshed counts (1 377 tests), the exact coverage numbers and the verification record |
+| Finalisation | this documentation commit — replaces the hashes of the destroyed commits with the rebuilt ones and records the reset event. It changes no source file |
 
+
+> **Sandbox-reset note — the old hashes are gone, not restored.** The follow-up and its
+> documentation were first built and fully verified as local commits `f4f90e2` and `db74c2a`.
+> Neither was ever pushed: the sandbox's GitHub credentials expired at the end of that round, and
+> before the credentials were reconnected the environment reset a third time, replacing the
+> checkout with a fresh clone at `790d2c0` (the root commit — which is an ancestor of the remote
+> head, so the remote history itself was never in danger). The reset destroyed those commit
+> **objects**; `f4f90e2` and `db74c2a` **cannot be recovered and are not claimed to be**. What
+> survived is their content: the working tree was verified byte-for-byte against the recorded
+> fingerprint (exactly six files differ from `8ad906d` — 282 insertions, 133 deletions), snapshotted
+> outside Git (tarball plus a 221-file sha256 manifest), and recommitted on top of `8ad906d` as
+> **`8f5400e`** (code and tests) and **`2968fa0`** (documentation) — new hashes and new parents over
+> the identical trees. The chain is `f8cece6` → `8ad906d` → `8f5400e` → `2968fa0` → this commit,
+> each a direct child of the one before it.
 
 The implementation and the follow-up carry code; the pinning record and the finalisation carry no
-source change at all. The chain is `f8cece6` → `8ad906d` → `f4f90e2` → the finalisation commit,
-each a direct child of the one before it.
+source change at all.
 
 ## 5. Files created and modified
 
@@ -669,18 +684,18 @@ compose acceptance job the sandbox cannot run.
 
 | Field | Value |
 | --- | --- |
-| Commit | `f8cece6` (`f8cece6bf26182016d06d885496bd9b03215473f`) and `8ad906d` (`8ad906d…`), both pushed and green; the follow-up `f4f90e2` is committed locally and its CI run is recorded once pushed (see the note below) |
+| Commit | `f8cece6` (`f8cece6bf26182016d06d885496bd9b03215473f`) and `8ad906d` (`8ad906d09940690c167efd930d7d449dbe73dc74`), both pushed and green (runs `34677845254`/`34677848307` on `f8cece6`); the rebuilt follow-up **`8f5400e`** and its documentation **`2968fa0`** are pushed with this round, and their run ids are pinned by the documentation commit above them and in `PROJECT_STATUS.md` |
 | Push run | **`34677845254`** — `completed` / `success` |
 | Pull-request run | **`34677848307`** — `completed` / `success` |
 | Jobs (both runs) | *Lint (ruff)*, *Type check (mypy)*, *Unit tests*, *OpenAPI document*, *Integration tests and schema gates*, *Compose stack (PART 44 acceptance)* — **all `success`**, no failing step |
 
-> **Push state of the follow-up.** The sandbox's GitHub credentials expired during this round:
-> `gh api user` answers *Bad credentials* and `git push` cannot read a username. `f4f90e2` (and the
-> documentation commit after it) are therefore committed on the working branch but **not yet
-> pushed**, and the PR #1 description edit is likewise pending. Nothing else is outstanding —
-> reconnecting GitHub in Arena and re-running `git push origin arena/01a090c5-nexus-exchange-erp`
-> completes it, and the CI run ids for the follow-up will be recorded next to these two. This is
-> recorded again in §32 as a limitation of the round rather than a defect of the phase.
+> **Reset and recovery of this round.** The round that produced the follow-up was verified locally
+> (whole sweep exit 0) but its push was rejected by expired credentials; the sandbox then reset and
+> the fresh clone destroyed the unpushed commit objects `f4f90e2`/`db74c2a` (see §4 — they are gone,
+> not restored). Recovery was content-based: the surviving working tree was snapshotted and verified
+> against the recorded fingerprint, then recommitted as `8f5400e` and `2968fa0` on top of `8ad906d`,
+> and the whole gate sweep was re-run on that rebuilt tree before publication. The push from here is
+> a plain fast-forward; no history was rewritten and no force-push was used.
 
 Every step of *Integration tests and schema gates* is green in both runs — `pytest (integration)`,
 *Migration on a clean database*, *Schema gate — ORM metadata vs migrated database*, *Schema gate —

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.12 |
+| Version | 1.13 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -160,10 +160,23 @@ Notes:
   phase 6 cash management*; **22 files, +9 215/−21** — 11 production, 1 tooling, 7 test and
   3 documentation files, `docs/phases/PHASE6_REPORT.md` and this document included),
   pushed to branch `arena/01a090c5-nexus-exchange-erp` → **`8ad906d`** (*docs(phase6): pin the
-  implementation commit and record the green CI runs*), also pushed → **`f4f90e2`** (*fix(cash):
-  compose cash SQL from pure-literal prefixes and pin both refusal shapes*), committed locally →
-  the documentation commit that pins these hashes and refreshes the counts and coverage numbers.
-* Phase 6 follow-up commit **`f4f90e2`** (`fix(cash)`: SQL composed from pure-literal statement
+  implementation commit and record the green CI runs*), also pushed → **`8f5400e`** (*fix(cash):
+  compose cash SQL from pure-literal prefixes and pin both refusal shapes*; **rebuilt** after the
+  sandbox reset, see below) → **`2968fa0`** (*docs(phase6): record the verification round, the exact
+  coverage numbers and the push state*; rebuilt as well) → the documentation commit that pins these
+  hashes and the green CI runs.
+* Phase 6 sandbox-reset recovery: the follow-up and its documentation were first built and verified
+  as local commits `f4f90e2` and `db74c2a`, but were never pushed — GitHub credentials expired at
+  the end of that round, and the third sandbox reset then replaced the checkout with a fresh clone
+  at `790d2c0` and destroyed those commit objects. The remote history was never affected: `790d2c0`
+  is the root ancestor of `8ad906d`. Recovery was content-based and honest: the surviving working
+  tree was snapshotted outside Git (tarball plus a 221-file sha256 manifest) and verified
+  byte-for-byte against the recorded fingerprint (six files, 282 insertions, 133 deletions against
+  `8ad906d`), then recommitted on top of `8ad906d` as **`8f5400e`** (code and tests) and
+  **`2968fa0`** (documentation). **`f4f90e2` and `db74c2a` are gone and are not restored**; the
+  documents name only the rebuilt hashes. The whole gate sweep was re-run on the rebuilt tree
+  before the fast-forward push.
+* Phase 6 follow-up commit **`8f5400e`** (rebuilt; `fix(cash)`: SQL composed from pure-literal statement
   prefixes, defect `D6-9`; and the two contractual refusal shapes pinned, defect `D6-10`): the phase's own hygiene gate counted **18 `# noqa: S608`** suppressions in the
   first draft — more than double the seven the codebase already had — and instead of documenting
   them the queries were rewritten so the rule has nothing to flag. The composed SQL is asserted
@@ -233,7 +246,8 @@ Each phase must, before it is declared complete:
 
 | Version | Date | Change |
 | --- | --- | --- |
-| 1.12 | 2026-09-12 | Phase 6 verification round two: the refusal-shape defect `D6-10` found by the coverage step's slower interleaving is fixed (the storm test now asserts the contract's shape; a new deterministic test pins `NO_POSITION` on an emptied till) and the follow-up commit is **`f4f90e2`**. Whole gate sweep run **twice consecutively, exit 0** (577 unit + **800** integration = **1 377**, ruff/format/mypy clean, fresh migration, both schema gates MATCH, seeds 89/88/88, Phase 0 invariants ALL PASSED, hygiene scans clean, Phase 6 coverage 100 %/92.9 %/89.4 %/95.1 % against the 85 % floor). The follow-up commit is committed but **not yet pushed**: the sandbox's GitHub credentials expired mid-round (`gh api user` → *Bad credentials*), so `git push` and the PR #1 description update are pending a reconnect. Phase 6 stays **READY FOR REVIEW** and Phase 7–17 **NOT STARTED** |
+| 1.13 | 2026-09-12 | Phase 6 sandbox-reset recovery and publication: the unpushed commits `f4f90e2`/`db74c2a` were destroyed by the third sandbox reset (credentials had expired before they could be pushed). The surviving working tree was snapshotted, verified byte-for-byte against the recorded 6-file / 282+ / 133− fingerprint and recommitted as **`8f5400e`** (code+tests) and **`2968fa0`** (docs) on top of `8ad906d`; the whole gate sweep re-ran green on the rebuilt tree before a fast-forward push. The old hashes are documented as lost, never as restored. Phase 6 stays **READY FOR REVIEW** and Phase 7–17 **NOT STARTED** |
+| 1.12 | 2026-09-12 | Phase 6 verification round two: the refusal-shape defect `D6-10` found by the coverage step's slower interleaving is fixed (the storm test now asserts the contract's shape; a new deterministic test pins `NO_POSITION` on an emptied till) and the follow-up commit is **`f4f90e2`**. Whole gate sweep run **twice consecutively, exit 0** (577 unit + **800** integration = **1 377**, ruff/format/mypy clean, fresh migration, both schema gates MATCH, seeds 89/88/88, Phase 0 invariants ALL PASSED, hygiene scans clean, Phase 6 coverage 100 %/92.9 %/89.4 %/95.1 % against the 85 % floor). Of that round's commits, `f4f90e2`/`db74c2a` were later destroyed by the third sandbox reset and rebuilt as `8f5400e`/`2968fa0` (see 1.13). Phase 6 stays **READY FOR REVIEW** and Phase 7–17 **NOT STARTED** |
 | 1.11 | 2026-09-12 | Phase 6 hygiene follow-up: the 18 `# noqa: S608` suppressions removed by rebuilding every cash statement from pure-literal prefixes (composed SQL proven token-identical), the suppression audit corrected in `PHASE6_REPORT.md` §27 with exact baseline-vs-head counts, coverage of the Phase 6 modules recorded with a greenlet-aware instrument, and the hygiene/coverage steps added to the local gate sweep. Phase 6 stays **READY FOR REVIEW** and Phase 7–17 **NOT STARTED** |
 | 1.10 | 2026-09-12 | Phase 6 finalisation: the implementation commit pinned as **`f8cece6`** with its exact diff stat (22 files, +9 215/−21) and its two green CI runs (`34677845254` push, `34677848307` pull request). Phase 5 stays **READY FOR REVIEW**, Phase 6 stays **READY FOR REVIEW** (not approved) and Phase 7–17 stay **NOT STARTED** |
 | 1.9 | 2026-09-12 | Phase 6 implementation + report: Phase 6 marked **READY FOR REVIEW** with `docs/phases/PHASE6_REPORT.md` (34 sections); the cash module (12 endpoints, 68 new tests), the `API_CONTRACT.md` §9.4 rewrite and the full verification (1 376 passed in two consecutive sweeps / ruff / mypy 97 files / migration / both schema gates / Phase 0 invariants / seeds 89-88-88) recorded, with the eight phase defects and the two behaviour confirmations. Phase 5 stays **READY FOR REVIEW** (not approved) and Phase 7–17 stay **NOT STARTED** |
