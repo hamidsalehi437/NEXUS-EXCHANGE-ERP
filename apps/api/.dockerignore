@@ -1,0 +1,38 @@
+# Build context exclusions for apps/api (PART 44, PART 56).
+# Keep the image small and make sure no secret or local state is ever copied in.
+
+# Secrets and local configuration — the real .env must never enter an image.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Python build/cache state
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Test and developer tooling (not needed to run the service)
+tests/
+.idea/
+.vscode/
+*.swp
+.git/
+.gitignore
+
+# Local data and logs
+*.log
+data/
+storage/

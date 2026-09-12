@@ -1,0 +1,335 @@
+# =============================================================================
+# NEXUS EXCHANGE ERP — local/staging stack (PART 44)
+# =============================================================================
+# Five services, exactly as specified: api, postgres, redis, nginx, worker.
+#
+#   nginx:80  ──▶  api:8000  ──▶  postgres:5432
+#                      │
+#                      └──▶  redis:6379  ◀──  worker (celery worker + beat)
+#
+# How to run (see docs/DEPLOYMENT.md for the full runbook):
+#
+#   cp .env.example .env        # then fill in the secrets (scripts/gen_env.sh)
+#   docker compose up -d --build --wait
+#   docker compose exec api alembic upgrade head
+#   docker compose exec api python -m seeds
+#
+# Rules encoded here, and why:
+#   * No secret is ever written in this file. Everything secret is read from .env
+#     as a required variable (the ":?" form) — Compose refuses to start when a value
+#     is missing, so a deployment can never silently come up with an empty password
+#     (PART 42).
+#   * Only nginx is reachable from outside. PostgreSQL and Redis are published on
+#     loopback for developer tooling only; the API port is not published at all.
+#   * The database is reached with two different credentials: the runtime role
+#     (nexus_api → inherits nexus_app, DML only, no DELETE on ledgers) and the
+#     migration role (nexus_migrator → inherits nexus_owner, runs DDL/seeds).
+#     infrastructure/postgres/init/01-roles.sh creates both on first boot.
+# =============================================================================
+
+name: nexus-exchange
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-api-environment: &api-environment
+  APP_ENV: ${APP_ENV:?set APP_ENV in .env}
+  APP_VERSION: ${APP_VERSION:-0.0.0-phase0}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  TZ: UTC
+  # Compose service names, built from the same credentials as the database
+  # container. This is what makes the same .env work with and without Docker.
+  DATABASE_URL: postgresql+asyncpg://nexus_api:${NEXUS_API_PASSWORD:?set NEXUS_API_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-nexus_exchange}
+  DATABASE_MIGRATION_URL: postgresql+asyncpg://nexus_migrator:${NEXUS_MIGRATOR_PASSWORD:?set NEXUS_MIGRATOR_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-nexus_exchange}
+  REDIS_URL: redis://:${REDIS_REQUIRED_PASSWORD:?set REDIS_REQUIRED_PASSWORD in .env}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_REQUIRED_PASSWORD:?}@redis:6379/1
+  CELERY_RESULT_BACKEND: redis://:${REDIS_REQUIRED_PASSWORD:?}@redis:6379/2
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+  DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+  DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_IN_TRANSACTION_TIMEOUT_MS:-30000}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+  REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+  ARGON2_TIME_COST: ${ARGON2_TIME_COST:-3}
+  ARGON2_MEMORY_COST: ${ARGON2_MEMORY_COST:-65536}
+  ARGON2_PARALLELISM: ${ARGON2_PARALLELISM:-4}
+  LOGIN_MAX_FAILED_ATTEMPTS: ${LOGIN_MAX_FAILED_ATTEMPTS:-5}
+  LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  TRUSTED_HOSTS: ${TRUSTED_HOSTS:-localhost,127.0.0.1}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  RATE_LIMIT_AUTH_PER_5MIN: ${RATE_LIMIT_AUTH_PER_5MIN:-10}
+  RATE_LIMIT_WRITE_PER_MIN: ${RATE_LIMIT_WRITE_PER_MIN:-120}
+  RATE_LIMIT_READ_PER_MIN: ${RATE_LIMIT_READ_PER_MIN:-600}
+  SECURE_HEADERS_ENABLED: ${SECURE_HEADERS_ENABLED:-true}
+  FORCE_HTTPS: ${FORCE_HTTPS:-false}
+  # Only the nginx container can reach the API port, so the proxy CIDR is the
+  # trust boundary for X-Forwarded-* (never "*": that would let any host spoof
+  # the client IP used for audit records and per-IP rate limiting).
+  FORWARDED_ALLOW_IPS: 172.28.0.0/24
+  BASE_CURRENCY_CODE: ${BASE_CURRENCY_CODE:-AFN}
+  RATE_TOLERANCE_BPS: ${RATE_TOLERANCE_BPS:-50}
+  BUSINESS_DATE_SKEW_MINUTES: ${BUSINESS_DATE_SKEW_MINUTES:-120}
+  OFFLINE_MAX_MINUTES_DEFAULT: ${OFFLINE_MAX_MINUTES_DEFAULT:-480}
+  NUMBERING_PREFIX_EXCHANGE: ${NUMBERING_PREFIX_EXCHANGE:-NX}
+  NUMBERING_PREFIX_TRANSFER: ${NUMBERING_PREFIX_TRANSFER:-TR}
+  NUMBERING_WIDTH: ${NUMBERING_WIDTH:-6}
+  IDEMPOTENCY_RETENTION_DAYS: ${IDEMPOTENCY_RETENTION_DAYS:-30}
+  STORAGE_PATH: /data/storage
+  BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
+  BACKUP_SCHEDULE_CRON: ${BACKUP_SCHEDULE_CRON:-0 2 * * *}
+  BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+  BACKUP_ENCRYPTION_RECIPIENT: ${BACKUP_ENCRYPTION_RECIPIENT:-}
+  BACKUP_VERIFY_AFTER_CREATE: ${BACKUP_VERIFY_AFTER_CREATE:-true}
+  CHANGE_LOG_RETENTION_DAYS: ${CHANGE_LOG_RETENTION_DAYS:-180}
+  RECONCILIATION_CRON: ${RECONCILIATION_CRON:-0 3 * * *}
+  CELERY_TASK_ALWAYS_EAGER: "false"
+  DEV_ADMIN_USERNAME: ${DEV_ADMIN_USERNAME:-admin}
+  DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-}
+  DEV_ADMIN_FULL_NAME: ${DEV_ADMIN_FULL_NAME:-System Administrator}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  METRICS_ENABLED: ${METRICS_ENABLED:-false}
+
+x-api-service: &api-service
+  build:
+    context: ./apps/api
+    dockerfile: Dockerfile
+  image: nexus-exchange/api:${APP_VERSION:-0.0.0-phase0}
+  env_file:
+    - .env
+  environment: *api-environment
+  volumes:
+    - api_storage:/data/storage
+  networks:
+    - nexus_backend
+  logging: *default-logging
+  restart: unless-stopped
+  stop_grace_period: 30s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  # ------------------------------------------------------------------ postgres
+  postgres:
+    image: postgres:16-bookworm
+    container_name: nexus-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_exchange}
+      POSTGRES_USER: ${POSTGRES_USER:-nexus_owner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_TIMEZONE: UTC
+      TZ: UTC
+      # The application roles are created by the init script below; it needs to
+      # know the two login-role passwords.
+      NEXUS_API_PASSWORD: ${NEXUS_API_PASSWORD:?}
+      NEXUS_MIGRATOR_PASSWORD: ${NEXUS_MIGRATOR_PASSWORD:?}
+      # scram-sha-256 for TCP even inside the compose network, and page checksums
+      # so silent storage corruption is detectable.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=trust --data-checksums --encoding=UTF8 --locale=C"
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - timezone=UTC
+      - -c
+      - log_timezone=UTC
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - jit=off
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Loopback only, on a non-default host port: psql/pgAdmin for developers,
+      # never exposed to the network (PART 42).
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    shm_size: 256mb
+    networks:
+      - nexus_backend
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # --------------------------------------------------------------------- redis
+  redis:
+    image: redis:7.4-alpine
+    container_name: nexus-redis
+    # The password is appended to the config inside the container from the
+    # environment, so it never appears in the process arguments of redis-server
+    # (visible via `ps` on the host) and never in this file.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        cp /usr/local/etc/redis/nexus.conf /tmp/nexus.conf
+        printf 'requirepass %s\n' "$$REDIS_REQUIRED_PASSWORD" >> /tmp/nexus.conf
+        exec redis-server /tmp/nexus.conf
+    environment:
+      REDIS_REQUIRED_PASSWORD: ${REDIS_REQUIRED_PASSWORD:?set REDIS_REQUIRED_PASSWORD in .env}
+      TZ: UTC
+    # The stock `redis` user (uid 999): Redis never needs to be root, and never
+    # needs a capability.
+    user: "999:999"
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/redis/nexus.conf:/usr/local/etc/redis/nexus.conf:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
+    networks:
+      - nexus_backend
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      # REDISCLI_AUTH keeps the password out of argv.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_REQUIRED_PASSWORD redis-cli -h 127.0.0.1 ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ----------------------------------------------------------------------- api
+  api:
+    <<: *api-service
+    container_name: nexus-api
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --no-server-header
+    expose:
+      - "8000"
+    healthcheck:
+      # Liveness only: an unreachable Redis must not restart (and interrupt) the
+      # API process — readiness is what reports a dependency problem.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # -------------------------------------------------------------------- worker
+  worker:
+    <<: *api-service
+    container_name: nexus-worker
+    command:
+      - celery
+      - -A
+      - app.worker.celery_app:celery_app
+      - worker
+      - --beat
+      - --loglevel=INFO
+      - --queues=integrity,maintenance
+      - --concurrency=2
+      - --hostname=worker@%h
+      - --schedule=/tmp/celerybeat-schedule
+    environment:
+      <<: *api-environment
+      # A worker that runs tasks eagerly would report "done" without doing the
+      # work; eager mode exists only for the test suite.
+      CELERY_TASK_ALWAYS_EAGER: "false"
+    healthcheck:
+      # `celery inspect ping` goes through the broker and returns a non-zero exit
+      # code when no worker answers, which is exactly the failure worth catching.
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping -d worker@$$(hostname) || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------- nginx
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nexus-nginx
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "${NGINX_HTTP_PORT:-8080}:80"
+    networks:
+      - nexus_backend
+    logging: *default-logging
+    restart: unless-stopped
+    stop_grace_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    healthcheck:
+      # The edge's own liveness; the API is checked by the api service.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: nexus-postgres-data
+  redis_data:
+    name: nexus-redis-data
+  api_storage:
+    name: nexus-api-storage
+
+networks:
+  nexus_backend:
+    name: nexus-backend
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        # Fixed subnet so FORWARDED_ALLOW_IPS can name the trust boundary
+        # exactly. Change it here and in the api environment together.
+        - subnet: 172.28.0.0/24

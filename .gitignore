@@ -1,0 +1,103 @@
+# =============================================================================
+# NEXUS EXCHANGE ERP — ignore rules
+# Secrets, machine state and build output never enter Git.
+# =============================================================================
+
+# --- Secrets and environment -------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.test
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+secrets/
+*.secret
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.python-version
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+
+# --- Flutter / Dart ----------------------------------------------------------
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.g.dart.lock
+.fvm/
+# Generated sources are committed for the client packages; local overrides are not
+*.iml
+.idea/
+.vscode/*
+!.vscode/settings.example.json
+
+# --- Node (web-admin, tooling) ----------------------------------------------
+node_modules/
+.pnpm-store/
+dist/
+.next/
+.nuxt/
+coverage/
+*.tsbuildinfo
+
+# --- Databases, dumps and backups -------------------------------------------
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.dump
+*.backup
+*.tar.gz.age
+backups/
+/data/
+pgdata/
+
+# --- Runtime artifacts -------------------------------------------------------
+*.log
+logs/
+tmp/
+.tmp/
+storage/
+*.pid
+*.sock
+
+# --- OS / editor -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+
+# --- Generated build artifacts -----------------------------------------------
+# The OpenAPI document is exported from the application (scripts/gen_openapi.sh) and
+# uploaded by CI; it is never hand-edited and never committed.
+docs/api/openapi.json
+
+# --- CI artifacts ------------------------------------------------------------
+test-results/
+playwright-report/
+junit*.xml

@@ -1,0 +1,186 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nexus-exchange-api"
+version = "0.1.0"
+description = "NEXUS EXCHANGE ERP — API foundation (FastAPI + SQLAlchemy 2.x + PostgreSQL 16)"
+readme = "README.md"
+license = { file = "../../LICENSE" }
+requires-python = ">=3.12"
+authors = [{ name = "NEXUS Exchange ERP" }]
+keywords = ["erp", "exchange", "fastapi", "postgresql", "offline-first"]
+classifiers = [
+  "Private :: Do Not Upload",
+  "Programming Language :: Python :: 3.12",
+  "Framework :: FastAPI",
+]
+
+# Runtime dependencies — pinned exactly (PART 56: reproducible builds).
+# Money-safety: no float-based numeric library is present anywhere.
+dependencies = [
+  "fastapi==0.115.14",
+  "uvicorn[standard]==0.34.3",
+  "pydantic==2.13.5",
+  "pydantic-settings==2.15.0",
+  "SQLAlchemy[asyncio]==2.0.52",
+  "asyncpg==0.30.0",
+  "alembic==1.19.2",
+  "psycopg[binary]==3.3.5",
+  "redis==5.3.1",
+  "celery[redis]==5.5.3",
+  "structlog==26.1.0",
+  "argon2-cffi==25.1.0",
+  # Access tokens (HS256, see SECURITY.md §2 and app/core/tokens.py). Pinned like every
+  # other runtime dependency: PART 56 requires reproducible builds.
+  "PyJWT==2.14.0",
+]
+
+[project.optional-dependencies]
+# Development and verification toolchain (CI installs `.[dev]`).
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.1.0",
+  "httpx==0.28.1",
+  "mypy==2.3.1",
+  "ruff==0.16.7",
+  "PyYAML==6.0.3",
+]
+
+[project.scripts]
+# Operator entry points (see docs/DEPLOYMENT.md)
+nexus-seed = "seeds.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "seeds"]
+
+# =============================================================================
+# Ruff — linting and formatting (PART 1, PART 56)
+# =============================================================================
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests", "seeds"]
+extend-exclude = ["alembic/versions", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # import sorting
+  "N",    # pep8-naming
+  "UP",   # pyupgrade
+  "B",    # bugbear
+  "C4",   # comprehensions
+  "SIM",  # simplify
+  "S",    # bandit-style security checks
+  "T10",  # debugger statements
+  "TID",  # tidy imports
+  "RET",  # return statements
+  "ARG",  # unused arguments
+  "DTZ",  # naive datetime detection — money/dates are always timezone-aware
+  "PIE",  # misc lints
+  "LOG",  # logging correctness
+  "RUF",  # ruff-specific
+]
+ignore = [
+  "S101",    # asserts are legitimate in tests (per-file ignore below anyway)
+  "DTZ001",  # datetime(...) without tzinfo is allowed for date-only helpers
+]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI dependency injection is built on call-in-default (`Depends(...)`, `Query(...)`):
+# B008 is a false positive for every router module in this project.
+"app/api/**" = ["B008", "S105"]
+# Tests assert, carry deliberate fixture credentials, use temporary directories and
+# invoke real executables (alembic, the seed runner, git) on purpose.
+"tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607", "ARG001", "ARG002", "PLR2004"]
+"alembic/env.py" = ["TID252", "E402"]
+# Seed modules are numbered to make their run order obvious; the numbering is part
+# of the design (see seeds/__main__.py), so the module-name rule does not apply.
+"seeds/[0-9]*.py" = ["N999"]
+"docs/**" = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "seeds", "tests"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+# =============================================================================
+# MyPy — type checking (PART 1, PART 56)
+# =============================================================================
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_no_return = true
+show_error_codes = true
+pretty = true
+exclude = ["alembic/versions"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Libraries that ship no type information; their public API is exercised by tests.
+module = ["asyncpg.*", "pgserver.*", "celery.*", "kombu.*", "billiard.*"]
+ignore_missing_imports = true
+follow_untyped_imports = false
+
+[[tool.mypy.overrides]]
+# Migrations are reviewed SQL, not typed application code.
+module = ["alembic.*"]
+ignore_errors = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# =============================================================================
+# Pytest — test configuration (PART 48, PART 56)
+# =============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "-ra",
+]
+markers = [
+  "unit: pure unit test (no database, no network)",
+  "integration: requires PostgreSQL (and optionally Redis)",
+  "schema: database schema / migration gate",
+  "slow: takes longer than a few seconds",
+  "masterdata: Phase 3 master-data suites (currencies, branches, customers, accounts, rates)",
+  "accounting: Phase 4 double-entry engine suites (posting, reversal, idempotency, scope, reports)",
+  "exchange: Phase 5 exchange engine suites (posting, lifecycle, accounting integration, concurrency)",
+  "cash: Phase 6 cash-management suites (shifts, movements, transfers, variance, concurrency)",
+  "security: authorisation and audit-behaviour suites",
+]
+filterwarnings = [
+  "error",
+  # SQLAlchemy emits this for the async sessionmaker usage pattern we rely on.
+  "ignore::DeprecationWarning:sqlalchemy.*",
+]
+
+[tool.coverage.run]
+source = ["app", "seeds"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]
+# CI gate: services/ and core/ must stay above 85 % (SEC-TEST-001 §6)
+fail_under = 0
