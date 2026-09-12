@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | `PROJECT-STATUS-001` |
-| Version | 1.9 |
+| Version | 1.10 |
 | Status | **Living document — updated at the end of every phase** |
 | Owner | Project (NEXUS EXCHANGE ERP) |
 | Rule | **The repository is the permanent source of truth for project progress.** Chat/session output is never the record; a phase exists only when its report is committed here and this table says so. |
@@ -155,14 +155,18 @@ Notes:
   one race winner's shape (both shapes verified by a throwaway probe, then the suite run three
   times green). No assertion was weakened, no test deleted, skipped or xfailed.
 
-
 * Phase 6 commits: `9d67582` (start, last Phase 5 commit — *docs(phase5): pin the implementation
-  commit and record the green CI runs*) → the **implementation commit** (*feat(cash): complete
+  commit and record the green CI runs*) → **`f8cece6`** (`f8cece6bf26182016d06d885496bd9b03215473f`, *feat(cash): complete
   phase 6 cash management*; **22 files, +9 215/−21** — 11 production, 1 tooling, 7 test and
   3 documentation files, `docs/phases/PHASE6_REPORT.md` and this document included),
   pushed to branch `arena/01a090c5-nexus-exchange-erp` → the **finalisation commit**
   (documentation only) that pins this hash and records the CI runs, at the top of the branch and
   visible in `git log`.
+* Phase 6 CI on `f8cece6`: push run `34677845254` and pull-request run `34677848307`, both
+  `completed`/**`success`** with all six jobs green (*Lint (ruff)*, *Type check (mypy)*,
+  *Unit tests*, *OpenAPI document*, *Integration tests and schema gates*, *Compose stack (PART 44
+  acceptance)*) and every step of the integration job green (pytest integration, migration on a
+  clean database, both schema gates, seed idempotency, Phase 0 invariant suite).
 * Phase 6 verification (whole sweep run **twice consecutively**, exit 0 both times): `ruff check .`
   clean; `ruff format --check .` → 156 files already formatted; `mypy app seeds scripts` → no
   issues in **97** source files; `pytest tests/unit -q` → **577 passed** (2.16 s);
@@ -208,7 +212,7 @@ Each phase must, before it is declared complete:
 | Limitation | Impact | Status |
 | --- | --- | --- |
 | No Docker CLI in the development sandbox | `docker compose up -d` and the containerised stack cannot be executed here; the CI compose job runs the real stack (build, health, migrate, seeds, development administrator, login and readiness through nginx, worker registration) and its step conclusions are the evidence | **All 15 compose steps green** in run `34628225139` |
-| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`. **Green for Phase 3** — run `34645985626` (push) and `34645990882` (PR) on `db85e21`. **Green for Phase 4** — run `34656339711` (push) and `34656343155` (PR) on `da0c9ff`, and the Gate Review fix commit `21b6211` with run `34659645307` (push) and `34659648417` (PR): all `completed`/`success`, six jobs `success` in each run, every *Integration tests and schema gates* step `success` (the only non-success step is `Container logs on failure`, `skipped` by design). **Phase 5** — run `34667533980` (push) and `34667536528` (pull request) on `40945b1`: all `completed`/`success`, six jobs `success` in each run. **Phase 6** — the implementation commit's push and pull-request runs are recorded in the Phase 6 finalisation commit (identical six-job expectation; local reproduction green twice) |
+| GitHub Actions are executed on GitHub, not in the sandbox | CI results are read back through the API (job/step conclusions, check-run annotations). **Job logs are not retrievable here** (`gh run view --log-failed` and the logs API return EOF), so a failing step is diagnosed by local reproduction plus a check annotation emitted by `scripts/ci_exec_report.sh` | **Green for Phase 2** — run `34628225139` (push) and `34628229827` (PR) on `19e0b0f`. **Green for Phase 3** — run `34645985626` (push) and `34645990882` (PR) on `db85e21`. **Green for Phase 4** — run `34656339711` (push) and `34656343155` (PR) on `da0c9ff`, and the Gate Review fix commit `21b6211` with run `34659645307` (push) and `34659648417` (PR): all `completed`/`success`, six jobs `success` in each run, every *Integration tests and schema gates* step `success` (the only non-success step is `Container logs on failure`, `skipped` by design). **Phase 5** — run `34667533980` (push) and `34667536528` (pull request) on `40945b1`: all `completed`/`success`, six jobs `success` in each run. **Phase 6** — run `34677845254` (push) and `34677848307` (pull request) on `f8cece6`: all `completed`/`success`, six jobs `success` in each run, every *Integration tests and schema gates* step `success` |
 | Python 3.11.2 (system interpreter) instead of 3.12 | Runtime differs from the target interpreter; dependency set and code target 3.12 | Known; documented per phase |
 | No command-line `redis-cli`/`psql` on `PATH` | Verification uses the driver-level scripts (`scripts/schema_gate.py`, `tests/invariants/*.sql` executed through psycopg) | Worked around |
 
@@ -216,6 +220,7 @@ Each phase must, before it is declared complete:
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.10 | 2026-09-12 | Phase 6 finalisation: the implementation commit pinned as **`f8cece6`** with its exact diff stat (22 files, +9 215/−21) and its two green CI runs (`34677845254` push, `34677848307` pull request). Phase 5 stays **READY FOR REVIEW**, Phase 6 stays **READY FOR REVIEW** (not approved) and Phase 7–17 stay **NOT STARTED** |
 | 1.9 | 2026-09-12 | Phase 6 implementation + report: Phase 6 marked **READY FOR REVIEW** with `docs/phases/PHASE6_REPORT.md` (34 sections); the cash module (12 endpoints, 68 new tests), the `API_CONTRACT.md` §9.4 rewrite and the full verification (1 376 passed in two consecutive sweeps / ruff / mypy 97 files / migration / both schema gates / Phase 0 invariants / seeds 89-88-88) recorded, with the eight phase defects and the two behaviour confirmations. Phase 5 stays **READY FOR REVIEW** (not approved) and Phase 7–17 stay **NOT STARTED** |
 | 1.0 | 2026-09-11 | Created for Phase 2 reporting: permanent phase table, reporting rule, environment limitations |
 | 1.1 | 2026-09-12 | Phase 2 marked **APPROVED**; Phase 3 marked **READY FOR REVIEW** with `docs/phases/PHASE3_REPORT.md`; Phase 3 commit chain and the "no migration needed" note added; Phase 4–17 remain NOT STARTED |

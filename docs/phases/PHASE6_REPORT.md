@@ -6,7 +6,7 @@
 | Phase | 6 — Cash management (roadmap: `docs/architecture/ROADMAP.md`) |
 | Status | **READY FOR REVIEW** (only the human reviewer may mark it APPROVED) |
 | Starting commit | `9d67582` (Phase 5 finalisation — implementation `40945b1` plus the documentation commit that pins it; the frozen Phase 5 lineage) |
-| Implementation commit | *pinned in the finalisation commit of this phase* (visible in `git log`) |
+| Implementation commit | **`f8cece6bf26182016d06d885496bd9b03215473f`** (`f8cece6`), *feat(cash): complete phase 6 cash management* |
 | Branch | `arena/01a090c5-nexus-exchange-erp` |
 | Predecessor | [`PHASE5_REPORT.md`](PHASE5_REPORT.md) (exchange engine) and [`PHASE4_REPORT.md`](PHASE4_REPORT.md) (the authoritative posting layer) |
 | Successor | Phase 7 (reports) — **not started, not authorised** |
@@ -84,19 +84,20 @@ file of the frozen phases was deleted, renamed or weakened.
 ## 4. Final commit
 
 The implementation, tests and documentation of this phase are **one commit** on
-`arena/01a090c5-nexus-exchange-erp`; the documentation-only finalisation commit that follows it
-pins the exact hash, the diff stat and the CI run identifiers, and `docs/PROJECT_STATUS.md` §1
-repeats them. The pattern is the one Phases 2–5 used, and no source file differs between the
-implementation commit and that finalisation commit.
+`arena/01a090c5-nexus-exchange-erp`:
 
 | Field | Value |
 | --- | --- |
-| Commit | *pinned in the finalisation commit of this phase* |
+| Commit | **`f8cece6bf26182016d06d885496bd9b03215473f`** (`f8cece6`), *feat(cash): complete phase 6 cash management* |
 | Parent | `9d67582` — *docs(phase5): pin the implementation commit and record the green CI runs* |
-| Contents | implementation + tests + this report + `PROJECT_STATUS.md` + `API_CONTRACT.md` (see §5) |
+| Contents | **22 files, +9 215/−21** — 11 production, 1 tooling, 7 test and 3 documentation files (`PHASE6_REPORT.md`, `PROJECT_STATUS.md`, `API_CONTRACT.md`) |
 | Branch | `arena/01a090c5-nexus-exchange-erp` (pushed; pull request #1) |
-| CI (push) | recorded in the finalisation commit |
-| CI (pull request) | recorded in the finalisation commit |
+| CI (push) | run **`34677845254`** — `completed` / `success`, all six jobs `success` |
+| CI (pull request) | run **`34677848307`** — `completed` / `success`, all six jobs `success` |
+
+The hash is pinned here by the documentation-only finalisation commit that follows it (the same
+pattern Phases 2–5 used). No source file differs between the implementation commit and that
+finalisation commit.
 
 ## 5. Files created and modified
 
@@ -637,11 +638,23 @@ Reproduced on a database created from scratch in this sweep (not a reused one):
 ## 29. CI results
 
 CI runs the same gates on a clean machine plus the OpenAPI document job and the five-service
-compose acceptance job the sandbox cannot run. The push and pull-request run identifiers of the
-implementation commit, with every job's conclusion, are recorded in the finalisation commit that
-follows this one and in `docs/PROJECT_STATUS.md` §1/§3 — the Phase 2–5 pattern. The local sweep
-(§25) reproduces every CI step that does not require Docker, twice consecutively, and this phase
-adds no CI configuration change.
+compose acceptance job the sandbox cannot run.
+
+| Field | Value |
+| --- | --- |
+| Commit | `f8cece6` (`f8cece6bf26182016d06d885496bd9b03215473f`) |
+| Push run | **`34677845254`** — `completed` / `success` |
+| Pull-request run | **`34677848307`** — `completed` / `success` |
+| Jobs (both runs) | *Lint (ruff)*, *Type check (mypy)*, *Unit tests*, *OpenAPI document*, *Integration tests and schema gates*, *Compose stack (PART 44 acceptance)* — **all `success`**, no failing step |
+
+Every step of *Integration tests and schema gates* is green in both runs — `pytest (integration)`,
+*Migration on a clean database*, *Schema gate — ORM metadata vs migrated database*, *Schema gate —
+reference file vs migrated database*, *Seed idempotency (first run / second run / --check)* and
+*Phase 0 invariant suite on a fresh migrated database* — and the compose job built the real
+five-service stack, migrated and seeded it, logged in through nginx and registered the worker, so
+the acceptance the sandbox cannot run (limitation in §32) is covered by CI. The local sweep (§25)
+reproduces every CI step that does not require Docker, twice consecutively; this phase adds no CI
+configuration change.
 
 > The compose job (PART 44 acceptance) builds the real stack (`api`, `postgres`, `redis`,
 > `nginx`, `worker`), migrates and seeds it through `docker compose exec`, logs in through nginx
